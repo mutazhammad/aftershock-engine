@@ -1,15 +1,15 @@
 import os, requests
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_SECRET_KEY"]
+SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 
 def write_event(record, top):
     row = {**top, "data": record}
     resp = requests.post(
         f"{SUPABASE_URL}/rest/v1/events?on_conflict=id",
         headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
