@@ -93,3 +93,36 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
             "key_metrics": key_metrics,
         },
         "location": EVENT.get("location", {}),
+        "sources": NARRATIVE.get("sources", []),
+        "status": NARRATIVE.get("status", "confirmed"),
+        "recency": NARRATIVE.get("recency", "settled"),
+        "summary": NARRATIVE.get("summary", ""),
+        "timeline": NARRATIVE.get("timeline", []),
+        "reaction": reaction,
+        "lasting_finding": NARRATIVE.get("lasting_finding", ""),
+        "timeseries": {"days": days, "series": timeseries,
+                       "markers": NARRATIVE.get("markers", [])},
+        "phases": phases,
+        "historical": NARRATIVE.get("historical", []),
+        "historical_precedents": NARRATIVE.get("historical_precedents", []),
+        "companies_affected": companies_affected,
+        "companies_in_news": NARRATIVE.get("companies_in_news", []),
+        "confidence": NARRATIVE.get("confidence", ""),
+        "disclaimer": "This tool informs your decision. It does not give investment advice.",
+    }
+
+    top = {
+        "event_id": EVENT["event_id"], "name": EVENT["name"],
+        "type_label": EVENT["type_label"],
+        "information_date": EVENT["information_date"],
+        "status": record["status"], "recency": record["recency"],
+        "region": EVENT.get("region", ""),
+    }
+
+    # smell test — shows up in the GitHub Actions log so you can verify a run
+    print(f"  {EVENT['event_id']}: t0={rets.index[pos].date()} benchmark={bench_ret:+.1f}%")
+    for r in reaction:
+        flag = "SIG" if r["significant"] else "n.s."
+        print(f"    {r['sector']:22s} {r['pct']:>7s} t={r['t_stat']:>5} {flag}")
+
+    return record, top
