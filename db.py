@@ -11,9 +11,12 @@ def write_event(record, top):
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
         },
-        json=row, timeout=30,
+        json=[row],                     # ← wrap in a list
+        timeout=30,
     )
+    if resp.status_code >= 300:
+        print(f"  write error {resp.status_code}: {resp.text[:200]}")
     resp.raise_for_status()
     print(f"  wrote {top['event_id']} ({resp.status_code})")
