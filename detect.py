@@ -36,12 +36,10 @@ BLOCK_PATTERNS = ["links", "roundup", "daily digest", "newsletter", "opinion"]
 
 
 def currents_get(keywords):
-    start = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
     try:
         r = requests.get(CURRENTS, params={
             "keywords": keywords,
             "language": "en",
-            "start_date": start,
         }, headers={"Authorization": API_KEY}, timeout=20)
         if r.status_code != 200:
             print(f"    (Currents error {r.status_code})")
