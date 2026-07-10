@@ -6,7 +6,6 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
 WATCHLIST = {
-WATCHLIST = {
     "waterway_block":   '("strait of hormuz" OR "suez canal" OR "bab el mandeb" OR "panama canal" OR "red sea" OR "taiwan strait" OR "black sea" OR "kerch strait" OR "malacca strait" OR "dardanelles" OR "bosphorus") (closed OR blocked OR blockade OR mined OR "shut down" OR disrupted OR seized OR attack OR rerouted OR suspended)',
     "pipeline_block":   '("gas pipeline" OR "oil pipeline" OR "nord stream" OR "druzhba pipeline" OR "energy pipeline" OR "power line" OR "transit pipeline") (sabotage OR explosion OR blast OR ruptured OR attacked OR "cut off" OR shutdown OR leak OR halted OR severed OR damaged)',
     "sanctions":        '("new sanctions" OR "sanctions package" OR "sanctions imposed" OR embargo OR "export controls" OR "asset freeze" OR "trade restrictions" OR blacklist OR "entity list") (imposed OR announced OR expanded OR targeting OR "cracks down" OR tightened)',
