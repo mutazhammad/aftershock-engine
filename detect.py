@@ -26,7 +26,7 @@ def save_candidate(c):
 for event_type, query in WATCHLIST.items():
     try:
         r = requests.get(GDELT, params={"query": query, "mode": "artlist",
-            "format": "json", "maxrecords": 250, "timespan": "3d", "sort": "datedesc"}, timeout=30)
+            "format": "json", "maxrecords": 250, "timespan": "2months", "sort": "datedesc"}, timeout=30)
         articles = r.json().get("articles", [])
     except Exception as e:
         print(f"  {event_type}: fetch failed ({e})"); time.sleep(8); continue
