@@ -91,6 +91,12 @@ for event_type, keywords in WATCHLIST.items():
                 articles[0])
     domains = sorted({(a.get("author") or a.get("url", "").split("/")[2]) for a in articles[:8] if a.get("url")})
     wk = datetime.now(timezone.utc).strftime("%Y%W")
+
+    # skip low-quality/roundup sources
+BLOCK_PATTERNS = ["links", "roundup", "daily digest", "newsletter", "opinion"]
+articles = [a for a in articles
+            if not any(p in (a.get("title","") or "").lower() for p in BLOCK_PATTERNS)]
+
     save_candidate({
         "id": f"{event_type}_{wk}",
         "headline": best.get("title", "").strip(),
