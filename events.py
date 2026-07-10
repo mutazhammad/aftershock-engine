@@ -41,7 +41,7 @@ EVENTS = [
             "information_date": "2026-02-27",
             "announcement_date": "2026-03-04",
             "benchmark": "^GSPC",
-            "download_start": "2025-08-01",
+            "download_start": "2025-06-01",
             "download_end": "2026-05-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
