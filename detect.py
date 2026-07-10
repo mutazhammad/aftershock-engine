@@ -6,7 +6,6 @@ API_KEY = os.environ.get("CURRENTS_API_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
-# Currents uses simpler keyword search — one phrase per type
 WATCHLIST = {
     "waterway_block":  "strait closed OR canal blocked OR shipping blockade",
     "pipeline_block":  "pipeline sabotage OR pipeline explosion OR pipeline attacked",
@@ -20,7 +19,6 @@ WATCHLIST = {
     "coup_unrest":     "military coup OR government overthrown OR state of emergency",
 }
 
-# Confirmation words per type (accuracy filter)
 CONFIRM = {
     "waterway_block": ["clos", "block", "blockad", "seiz", "shut"],
     "pipeline_block": ["sabotag", "explos", "ruptur", "attack", "sever"],
@@ -34,9 +32,10 @@ CONFIRM = {
     "coup_unrest": ["coup", "overthrow", "takeover", "emergency"],
 }
 
+BLOCK_PATTERNS = ["links", "roundup", "daily digest", "newsletter", "opinion"]
+
 
 def currents_get(keywords):
-    # last 30 days
     start = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00")
     try:
         r = requests.get(CURRENTS, params={
@@ -69,11 +68,13 @@ def save_candidate(c):
                  "Prefer": "resolution=merge-duplicates,return=minimal"},
         data=json.dumps([c]), timeout=30,
     )
-    print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {c['id']}")
+    print(f"  {'SAVED' if resp.status_code < 300 else 'error ' + str(resp.status_code)}: {c['id']}")
 
 
 for event_type, keywords in WATCHLIST.items():
     articles = currents_get(keywords)
+    articles = [a for a in articles
+                if not any(p in (a.get("title", "") or "").lower() for p in BLOCK_PATTERNS)]
 
     if len(articles) < 5:
         print(f"  {event_type}: {len(articles)} articles, not significant")
@@ -89,21 +90,21 @@ for event_type, keywords in WATCHLIST.items():
     words = CONFIRM.get(event_type, [])
     best = next((a for a in articles if any(w in (a.get("title", "") or "").lower() for w in words)),
                 articles[0])
-    domains = sorted({(a.get("author") or a.get("url", "").split("/")[2]) for a in articles[:8] if a.get("url")})
+    sources = []
+    for a in articles[:8]:
+        url = a.get("url", "")
+        if url and "/" in url:
+            parts = url.split("/")
+            if len(parts) > 2:
+                sources.append(parts[2])
     wk = datetime.now(timezone.utc).strftime("%Y%W")
-
-    # skip low-quality/roundup sources
-BLOCK_PATTERNS = ["links", "roundup", "daily digest", "newsletter", "opinion"]
-articles = [a for a in articles
-            if not any(p in (a.get("title","") or "").lower() for p in BLOCK_PATTERNS)]
-
     save_candidate({
         "id": f"{event_type}_{wk}",
         "headline": best.get("title", "").strip(),
         "event_type": event_type,
         "detected_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "coverage_count": len(articles),
-        "source_domains": ", ".join(list(domains)[:8]),
+        "source_domains": ", ".join(sorted(set(sources))[:8]),
         "status": "pending",
     })
     time.sleep(1)
