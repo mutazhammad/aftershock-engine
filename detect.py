@@ -1,60 +1,64 @@
 import os, requests, json, time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from anthropic import Anthropic
 
 CURRENTS = "https://api.currentsapi.services/v1/search"
-API_KEY = os.environ.get("CURRENTS_API_KEY", "")
+CURRENTS_KEY = os.environ.get("CURRENTS_API_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
+client = Anthropic()
 
-WATCHLIST = {
-    "waterway_block":  "strait closed OR canal blocked OR shipping blockade",
-    "pipeline_block":  "pipeline sabotage OR pipeline explosion OR pipeline attacked",
-    "sanctions":       "new sanctions OR sanctions package OR export controls",
-    "bombing":         "airstrike OR military strike OR missile attack",
-    "invasion":        "invasion OR military offensive OR declares war",
-    "trade_deal":      "trade deal signed OR trade agreement reached",
-    "tariffs":         "new tariffs OR tariff hike OR trade war",
-    "opec_supply":     "OPEC production cut OR OPEC output",
-    "nuclear":         "nuclear test OR uranium enrichment OR ballistic missile",
-    "coup_unrest":     "military coup OR government overthrown OR state of emergency",
-}
-
-CONFIRM = {
-    "waterway_block": ["clos", "block", "blockad", "seiz", "shut"],
-    "pipeline_block": ["sabotag", "explos", "ruptur", "attack", "sever"],
-    "sanctions": ["sanction", "embargo", "export control", "blacklist"],
-    "bombing": ["strike", "airstrike", "missile", "bomb", "attack"],
-    "invasion": ["invas", "invad", "offensive", "war", "troops"],
-    "trade_deal": ["deal", "agreement", "sign", "pact", "accord"],
-    "tariffs": ["tariff", "duties", "trade war", "levy"],
-    "opec_supply": ["opec", "output", "production", "cut"],
-    "nuclear": ["nuclear", "uranium", "missile", "enrich"],
-    "coup_unrest": ["coup", "overthrow", "takeover", "emergency"],
-}
-
-BLOCK_PATTERNS = ["links", "roundup", "daily digest", "newsletter", "opinion"]
+TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
+          "trade war tariffs", "invasion war", "OPEC oil", "nuclear missile"]
 
 
-def currents_get(keywords):
+def gather_articles():
+    seen, pool = set(), []
+    for topic in TOPICS:
+        try:
+            r = requests.get(CURRENTS, params={"keywords": topic, "language": "en"},
+                             headers={"Authorization": CURRENTS_KEY}, timeout=20)
+            if r.status_code == 200:
+                for a in r.json().get("news", []):
+                    title = (a.get("title") or "").strip()
+                    if title and title not in seen:
+                        seen.add(title)
+                        pool.append({"title": title,
+                                     "description": (a.get("description") or "")[:200]})
+        except Exception as e:
+            print(f"  gather failed for {topic}: {str(e)[:40]}")
+        time.sleep(1)
+    return pool
+
+
+def ai_pick_events(articles):
+    listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
+                        for i, a in enumerate(articles[:80]))
+    system = (
+        "You are a financial-markets analyst. From news headlines, identify the most "
+        "SIGNIFICANT geopolitical events likely to move financial markets (wars, strikes "
+        "on infrastructure, sanctions, blockades, major trade deals, OPEC decisions, "
+        "nuclear escalation, coups). IGNORE sports, entertainment, local news, opinion, "
+        "and non-market news. Only REAL events that actually happened."
+    )
+    user = (
+        f"Recent headlines:\n\n{listing}\n\n"
+        "Return ONLY a JSON array of up to 6 most significant market-moving events, each: "
+        '{"event_type":"one of: waterway_block, pipeline_block, sanctions, sanctions_relief, '
+        'bombing, invasion, trade_deal, tariffs, opec_supply, nuclear, coup_unrest, '
+        'cyberattack, financial_crisis", "headline":"actual headline", '
+        '"why_significant":"one line"}. If none qualify, return []. Only the JSON.'
+    )
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001", max_tokens=1500,
+        system=system, messages=[{"role": "user", "content": user}],
+    )
+    text = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
     try:
-        r = requests.get(CURRENTS, params={
-            "keywords": keywords,
-            "language": "en",
-            "domain": "reuters.com,apnews.com,bloomberg.com,aljazeera.com,bbc.com,cnbc.com,ft.com",
-        }, headers={"Authorization": API_KEY}, timeout=20)
-        if r.status_code != 200:
-            print(f"    (Currents error {r.status_code})")
-            return []
-        return r.json().get("news", [])
-    except Exception as e:
-        print(f"    (fetch failed: {str(e)[:50]})")
+        return json.loads(text)
+    except Exception:
+        print("  AI returned non-JSON:", text[:150])
         return []
-
-def is_accurate(event_type, articles):
-    words = CONFIRM.get(event_type, [])
-    hits = sum(1 for a in articles[:20]
-               if any(w in (a.get("title", "") or "").lower() for w in words))
-    return hits, hits >= 3
 
 
 def save_candidate(c):
@@ -66,45 +70,28 @@ def save_candidate(c):
                  "Prefer": "resolution=merge-duplicates,return=minimal"},
         data=json.dumps([c]), timeout=30,
     )
-    print(f"  {'SAVED' if resp.status_code < 300 else 'error ' + str(resp.status_code)}: {c['id']}")
+    print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {c['id']}")
 
 
-for event_type, keywords in WATCHLIST.items():
-    articles = currents_get(keywords)
-    articles = [a for a in articles
-                if not any(p in (a.get("title", "") or "").lower() for p in BLOCK_PATTERNS)]
+print("Gathering articles...")
+pool = gather_articles()
+print(f"  {len(pool)} unique articles")
 
-    if len(articles) < 5:
-        print(f"  {event_type}: {len(articles)} articles, not significant")
-        time.sleep(1)
-        continue
+print("AI selecting significant events...")
+events = ai_pick_events(pool)
+print(f"  AI identified {len(events)} events")
 
-    hits, ok = is_accurate(event_type, articles)
-    if not ok:
-        print(f"  {event_type}: {len(articles)} articles, only {hits} confirm — skipped")
-        time.sleep(1)
-        continue
-
-    words = CONFIRM.get(event_type, [])
-    best = next((a for a in articles if any(w in (a.get("title", "") or "").lower() for w in words)),
-                articles[0])
-    sources = []
-    for a in articles[:8]:
-        url = a.get("url", "")
-        if url and "/" in url:
-            parts = url.split("/")
-            if len(parts) > 2:
-                sources.append(parts[2])
-    wk = datetime.now(timezone.utc).strftime("%Y%W")
+wk = datetime.now(timezone.utc).strftime("%Y%W")
+for i, e in enumerate(events):
+    etype = e.get("event_type", "other")
     save_candidate({
-        "id": f"{event_type}_{wk}",
-        "headline": best.get("title", "").strip(),
-        "event_type": event_type,
+        "id": f"{etype}_{i}_{wk}",
+        "headline": e.get("headline", "").strip(),
+        "event_type": etype,
         "detected_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "coverage_count": len(articles),
-        "source_domains": ", ".join(sorted(set(sources))[:8]),
+        "coverage_count": 0,
+        "source_domains": e.get("why_significant", "")[:200],
         "status": "pending",
     })
-    time.sleep(1)
 
 print("Detection complete.")
