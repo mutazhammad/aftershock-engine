@@ -7,6 +7,7 @@ print(f"DEBUG key length: {len(SUPABASE_KEY) if SUPABASE_KEY else 'EMPTY'}")
 
 def write_event(record, top):
     row = {**top, "data": record}
+    row["id"] = row.pop("event_id")
     url = f"{SUPABASE_URL}/rest/v1/events"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -21,4 +22,4 @@ def write_event(record, top):
     if resp.status_code >= 300:
         print(f"  write error {resp.status_code}: {resp.text[:300]}")
     else:
-        print(f"  wrote {top['event_id']} ({resp.status_code})")
+        print(f"  wrote {row['id']} ({resp.status_code})")
