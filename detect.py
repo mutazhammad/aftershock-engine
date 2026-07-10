@@ -54,18 +54,30 @@ TRUSTED = ("(domainis:reuters.com OR domainis:apnews.com OR domainis:bloomberg.c
            "OR domainis:bbc.com OR domainis:cnbc.com OR domainis:theguardian.com "
            "OR domainis:nytimes.com OR domainis:washingtonpost.com OR domainis:economist.com)")
 
+import time
+
+LAST_CALL = [0]     # tracks when we last hit GDELT
 
 def gdelt_get(query):
+    # enforce >=6 seconds since the last call, always
+    wait = 6 - (time.time() - LAST_CALL[0])
+    if wait > 0:
+        time.sleep(wait)
+    LAST_CALL[0] = time.time()
+
+    full_query = f"{query} {TRUSTED}"
     try:
-        full_query = f"{query} {TRUSTED} sourcelang:english"
         r = requests.get(GDELT, params={"query": full_query, "mode": "artlist",
             "format": "json", "maxrecords": 50, "timespan": "1month",
-            "sort": "datedesc"}, timeout=12)      # short timeout = never hangs long
+            "sort": "datedesc"}, timeout=30)
+        if r.status_code == 429:
+            print("    (rate limited — waiting 15s)")
+            time.sleep(15)
+            return gdelt_get(query)         # retry once after cooldown
         return r.json().get("articles", [])
     except Exception as e:
         print(f"    (fetch failed: {str(e)[:50]})")
         return []
-
 
 def is_accurate(event_type, articles):
     """ACCURACY CHECK: of the top articles, how many actually confirm the event
