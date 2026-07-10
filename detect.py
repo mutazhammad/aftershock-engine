@@ -20,7 +20,6 @@ WATCHLIST = {
     "nuclear":          '("nuclear test" OR "nuclear program" OR "uranium enrichment" OR "nuclear facility" OR "ballistic missile") (test OR strike OR expanded OR "missile launch" OR threat OR escalation)',
     "energy_shock":     '("energy crisis" OR "power outage" OR "gas supply" OR "oil supply" OR "electricity shortage" OR "fuel shortage") (cut OR halted OR disrupted OR shortage OR crisis OR surge OR spike)',
 }
-
 def save_candidate(c):
     resp = requests.post(
         f"{SUPABASE_URL}/rest/v1/candidates",
@@ -32,16 +31,26 @@ def save_candidate(c):
     )
     print(f"  {'saved' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {c['id']}")
 
+
+def gdelt_get(query, tries=3):
+    for i in range(tries):
+        try:
+            r = requests.get(GDELT, params={"query": query, "mode": "artlist",
+                "format": "json", "maxrecords": 75, "timespan": "7d",
+                "sort": "datedesc"}, timeout=20)
+            return r.json().get("articles", [])
+        except Exception:
+            time.sleep(10)          # wait, then retry
+    return []
+
+
 for event_type, query in WATCHLIST.items():
-    try:
-        r = requests.get(GDELT, params={"query": query, "mode": "artlist",
-            "format": "json", "maxrecords": 250, "timespan": "7d", "sort": "datedesc"}, timeout=30)
-        articles = r.json().get("articles", [])
-    except Exception as e:
-        print(f"  {event_type}: fetch failed ({e})"); time.sleep(8); continue
+    articles = gdelt_get(query)                     # ← uses the retry helper
 
     if len(articles) < 5:
-        print(f"  {event_type}: {len(articles)} articles, below threshold"); time.sleep(8); continue
+        print(f"  {event_type}: {len(articles)} articles, below threshold")
+        time.sleep(5)
+        continue
 
     domains = sorted({a.get("domain") for a in articles if a.get("domain")})
     wk = datetime.now(timezone.utc).strftime("%Y%W")
@@ -54,6 +63,6 @@ for event_type, query in WATCHLIST.items():
         "source_domains": ", ".join(domains[:8]),
         "status": "pending",
     })
-    time.sleep(8)
+    time.sleep(5)
 
 print("Detection complete.")
