@@ -1,0 +1,20 @@
+name: Verify and publish events
+on:
+  schedule:
+    - cron: "30 6 * * *"     # daily at 06:30 UTC — 30 min after detection
+  workflow_dispatch:          # manual "Run" button too
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests anthropic pandas numpy yfinance
+      - run: python verify.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          CURRENTS_API_KEY: ${{ secrets.CURRENTS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
