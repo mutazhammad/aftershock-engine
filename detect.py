@@ -40,6 +40,7 @@ def currents_get(keywords):
         r = requests.get(CURRENTS, params={
             "keywords": keywords,
             "language": "en",
+            "domain": "reuters.com,apnews.com,bloomberg.com,aljazeera.com,bbc.com,cnbc.com,ft.com",
         }, headers={"Authorization": API_KEY}, timeout=20)
         if r.status_code != 200:
             print(f"    (Currents error {r.status_code})")
@@ -48,7 +49,6 @@ def currents_get(keywords):
     except Exception as e:
         print(f"    (fetch failed: {str(e)[:50]})")
         return []
-
 
 def is_accurate(event_type, articles):
     words = CONFIRM.get(event_type, [])
