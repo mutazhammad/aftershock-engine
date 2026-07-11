@@ -69,7 +69,10 @@ def resolve_date_with_ai(headline, why):
         return None
     # Fix 1: pull the first YYYY-MM-DD out of whatever the AI said
     m = re.search(r"\d{4}-\d{2}-\d{2}", text)
-    return m.group(0) if m else None
+    if m:
+        return m.group(0)
+    print(f"    (no date in AI reply: {text[:80]})")
+    return None
 
 
 def plausibility_ok(record, expect):
@@ -146,11 +149,29 @@ for c in get_pending():
         dl_end_dt = today_dt
     dl_end = dl_end_dt.strftime("%Y-%m-%d")
 
-    # if fewer than ~10 days have passed since the event, it's too fresh to measure fully
     days_since = (today_dt - ev_date).days
+
+    # TOO RECENT: publish as "breaking" — everything except measured reaction
     if days_since < 10:
-        mark_candidate(cid, "held", f"too recent ({days_since}d) — breaking, insufficient data")
-        print(f"  HELD: too recent ({days_since} days since event)"); continue
+        breaking_record = {
+            "event": {"name": headline[:80], "type_label": etype,
+                      "information_date": date, "announcement_date": date, "key_metrics": []},
+            "location": {}, "sources": [], "status": "confirmed", "recency": "breaking",
+            "summary": headline,
+            "timeline": [], "reaction": [], "lasting_finding": "",
+            "timeseries": {"days": [], "series": [], "markers": []},
+            "phases": [], "historical": [], "historical_precedents": [],
+            "companies_affected": [], "companies_in_news": [],
+            "confidence": c.get("source_domains", ""),
+            "disclaimer": "This tool informs your decision. It does not give investment advice.",
+        }
+        breaking_top = {"event_id": cid, "name": headline[:80], "type_label": etype,
+                        "information_date": date, "status": "confirmed",
+                        "recency": "breaking", "region": ""}
+        publish_event(breaking_record, breaking_top)
+        mark_candidate(cid, "published", f"breaking — {days_since}d old, reaction pending")
+        print(f"  PUBLISHED (breaking, {days_since}d old — no reaction yet)")
+        continue
 
     EVENT = {"event_id": cid, "name": headline[:80], "type_label": etype,
              "information_date": date, "announcement_date": date, "benchmark": "^GSPC",
