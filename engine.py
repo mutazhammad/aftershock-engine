@@ -66,6 +66,58 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         ph = phase_summary(days, path); ph["sector"] = sector
         phases.append(ph)
 
+    def volatility_analysis(rets, bench_rets, vix_series, pos, baskets, ar):
+    """Measure how volatility changed after the event.
+    Returns a dict with VIX move and per-sector realized-volatility ratios."""
+    PRE, POST = 20, 20   # 20 trading days before vs after
+
+    out = {"vix": None, "sectors": []}
+
+    # --- VIX: market-wide fear ---
+    if vix_series is not None and len(vix_series) > pos + 5:
+        pre_vix = float(vix_series.iloc[max(pos - PRE, 0):pos].mean())
+        post_vix = float(vix_series.iloc[pos:min(pos + POST, len(vix_series))].mean())
+        peak_vix = float(vix_series.iloc[pos:min(pos + POST, len(vix_series))].max())
+        if pre_vix > 0:
+            pct = (post_vix / pre_vix - 1) * 100
+            out["vix"] = {
+                "before": round(pre_vix, 1),
+                "after": round(post_vix, 1),
+                "peak": round(peak_vix, 1),
+                "change_pct": f"{pct:+.0f}%",
+                "spiked": pct >= 15,           # a meaningful fear spike
+                "tone": "loss" if pct > 0 else "gain",
+            }
+
+    # --- Realized volatility per sector: were these stocks jumpier after? ---
+    for sector, members in baskets.items():
+        have = [t for t in members if t in ar.columns]
+        if not have:
+            continue
+        basket_ret = rets[have].mean(axis=1)
+        pre = basket_ret.iloc[max(pos - PRE, 0):pos]
+        post = basket_ret.iloc[pos:min(pos + POST, len(basket_ret))]
+        if len(pre) < 5 or len(post) < 5:
+            continue
+        pre_vol = float(pre.std(ddof=1)) * (252 ** 0.5) * 100    # annualized %
+        post_vol = float(post.std(ddof=1)) * (252 ** 0.5) * 100
+        if pre_vol <= 0:
+            continue
+        ratio = post_vol / pre_vol
+        out["sectors"].append({
+            "sector": sector,
+            "vol_before": f"{pre_vol:.0f}%",
+            "vol_after": f"{post_vol:.0f}%",
+            "ratio": round(ratio, 2),
+            "more_volatile": ratio >= 1.25,       # meaningfully jumpier
+            "plain": (f"{ratio:.1f}x more volatile after"
+                      if ratio >= 1.05 else
+                      f"{1/ratio:.1f}x calmer after" if ratio <= 0.95 else
+                      "volatility roughly unchanged"),
+        })
+
+    return out
+
     companies_affected = []
     for sector, members in BASKETS.items():
         for tk in members:
