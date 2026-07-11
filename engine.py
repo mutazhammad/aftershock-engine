@@ -30,28 +30,37 @@ def phase_summary(days, path):
     return {"peak_pct": f"{peak_val:+.1f}%", "peak_day": days[peak_i],
             "reverted_by_day": reverted}
 
-    def volatility_analysis(rets, bench_rets, vix_series, pos, baskets, ar):
+
+def volatility_analysis(rets, vix_series, pos, baskets, ar):
     """Measure how volatility changed after the event.
-    Returns a dict with VIX move and per-sector realized-volatility ratios."""
+    Returns VIX move (market-wide fear) and per-sector realized-volatility ratios."""
     PRE, POST = 20, 20   # 20 trading days before vs after
 
     out = {"vix": None, "sectors": []}
 
     # --- VIX: market-wide fear ---
-    if vix_series is not None and len(vix_series) > pos + 5:
-        pre_vix = float(vix_series.iloc[max(pos - PRE, 0):pos].mean())
-        post_vix = float(vix_series.iloc[pos:min(pos + POST, len(vix_series))].mean())
-        peak_vix = float(vix_series.iloc[pos:min(pos + POST, len(vix_series))].max())
-        if pre_vix > 0:
-            pct = (post_vix / pre_vix - 1) * 100
-            out["vix"] = {
-                "before": round(pre_vix, 1),
-                "after": round(post_vix, 1),
-                "peak": round(peak_vix, 1),
-                "change_pct": f"{pct:+.0f}%",
-                "spiked": pct >= 15,           # a meaningful fear spike
-                "tone": "loss" if pct > 0 else "gain",
-            }
+    if vix_series is not None:
+        vix_clean = vix_series.dropna()
+        if len(vix_clean) > pos + 5:
+            pre_slice = vix_series.iloc[max(pos - PRE, 0):pos].dropna()
+            post_slice = vix_series.iloc[pos:min(pos + POST, len(vix_series))].dropna()
+            if len(pre_slice) >= 3 and len(post_slice) >= 3:
+                pre_vix = float(pre_slice.mean())
+                post_vix = float(post_slice.mean())
+                peak_vix = float(post_slice.max())
+                if pre_vix > 0:
+                    pct = (post_vix / pre_vix - 1) * 100
+                    out["vix"] = {
+                        "before": round(pre_vix, 1),
+                        "after": round(post_vix, 1),
+                        "peak": round(peak_vix, 1),
+                        "change_pct": f"{pct:+.0f}%",
+                        "spiked": bool(pct >= 15),
+                        "tone": "loss" if pct > 0 else "gain",
+                        "plain": ("Market fear spiked" if pct >= 15
+                                  else "Market fear rose modestly" if pct > 0
+                                  else "Market fear eased"),
+                    }
 
     # --- Realized volatility per sector: were these stocks jumpier after? ---
     for sector, members in baskets.items():
@@ -59,8 +68,8 @@ def phase_summary(days, path):
         if not have:
             continue
         basket_ret = rets[have].mean(axis=1)
-        pre = basket_ret.iloc[max(pos - PRE, 0):pos]
-        post = basket_ret.iloc[pos:min(pos + POST, len(basket_ret))]
+        pre = basket_ret.iloc[max(pos - PRE, 0):pos].dropna()
+        post = basket_ret.iloc[pos:min(pos + POST, len(basket_ret))].dropna()
         if len(pre) < 5 or len(post) < 5:
             continue
         pre_vol = float(pre.std(ddof=1)) * (252 ** 0.5) * 100    # annualized %
@@ -73,25 +82,26 @@ def phase_summary(days, path):
             "vol_before": f"{pre_vol:.0f}%",
             "vol_after": f"{post_vol:.0f}%",
             "ratio": round(ratio, 2),
-            "more_volatile": ratio >= 1.25,       # meaningfully jumpier
-            "plain": (f"{ratio:.1f}x more volatile after"
-                      if ratio >= 1.05 else
-                      f"{1/ratio:.1f}x calmer after" if ratio <= 0.95 else
-                      "volatility roughly unchanged"),
+            "more_volatile": bool(ratio >= 1.25),
+            "plain": (f"{ratio:.1f}x more volatile after" if ratio >= 1.05
+                      else f"{1/ratio:.1f}x calmer after" if ratio <= 0.95
+                      else "volatility roughly unchanged"),
         })
 
     return out
+
+
 # ---------- main ----------
 def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
     bench = EVENT["benchmark"]
     tickers = sorted({t for ms in BASKETS.values() for t in ms})
 
-    prices = yf.download(tickers + [bench], start=EVENT["download_start"],
+    prices = yf.download(tickers + [bench, "^VIX"], start=EVENT["download_start"],
                          end=EVENT["download_end"], auto_adjust=True)["Close"]
-    rets = prices.pct_change().dropna()
+    rets = prices[tickers + [bench]].pct_change().dropna()
     ar = rets[tickers].sub(rets[bench], axis=0)          # market-adjusted
 
-    # VIX level series (not returns — we want the actual fear index level)
+    # VIX level series (the fear index itself, not its returns), aligned to trading days
     vix_series = prices["^VIX"].reindex(rets.index) if "^VIX" in prices.columns else None
 
     pos = int(rets.index.searchsorted(pd.Timestamp(EVENT["information_date"])))
@@ -119,6 +129,9 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         ph = phase_summary(days, path); ph["sector"] = sector
         phases.append(ph)
 
+    # volatility analysis
+    vol = volatility_analysis(rets, vix_series, pos, BASKETS, ar)
+
     companies_affected = []
     for sector, members in BASKETS.items():
         for tk in members:
@@ -137,6 +150,10 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         {"label": "S&P 500", "value": f"{bench_ret:+.1f}%",
          "tone": "loss" if bench_ret < 0 else "gain"}
     ]
+    if vol.get("vix"):
+        key_metrics.append({"label": "VIX (fear index)",
+                            "value": vol["vix"]["change_pct"],
+                            "tone": vol["vix"]["tone"]})
 
     record = {
         "event": {
@@ -156,6 +173,7 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         "timeseries": {"days": days, "series": timeseries,
                        "markers": NARRATIVE.get("markers", [])},
         "phases": phases,
+        "volatility": vol,
         "historical": NARRATIVE.get("historical", []),
         "historical_precedents": NARRATIVE.get("historical_precedents", []),
         "companies_affected": companies_affected,
@@ -177,5 +195,10 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
     for r in reaction:
         flag = "SIG" if r["significant"] else "n.s."
         print(f"    {r['sector']:22s} {r['pct']:>7s} t={r['t_stat']:>5} {flag}")
+    if vol.get("vix"):
+        v = vol["vix"]
+        print(f"    VIX {v['before']} -> {v['after']} ({v['change_pct']}) peak {v['peak']}")
+    for s in vol.get("sectors", [])[:3]:
+        print(f"    vol {s['sector']:22s} {s['ratio']}x  {s['plain']}")
 
     return record, top
