@@ -9,18 +9,18 @@ client = Anthropic()
 
 # --- RULE: event_type -> basket name + expected sector directions ---
 TYPE_CONFIG = {
-    "bombing":        {"basket": "energy", "expect": {"Oil & gas producers": "up", "Defense contractors": "up"}},
-    "waterway_block": {"basket": "energy", "expect": {"Oil tanker operators": "up", "Oil & gas producers": "up"}},
-    "pipeline_block": {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
-    "sanctions":      {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
+    "bombing":         {"basket": "energy", "expect": {"Oil & gas producers": "up", "Defense contractors": "up"}},
+    "waterway_block":  {"basket": "energy", "expect": {"Oil tanker operators": "up", "Oil & gas producers": "up"}},
+    "pipeline_block":  {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
+    "sanctions":       {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
     "sanctions_relief":{"basket": "energy", "expect": {}},
-    "invasion":       {"basket": "energy", "expect": {"Defense contractors": "up", "Gold": "up"}},
-    "opec_supply":    {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
-    "tariffs":        {"basket": "trade",  "expect": {}},
-    "trade_deal":     {"basket": "trade",  "expect": {}},
-    "nuclear":        {"basket": "safe_haven", "expect": {"Gold": "up"}},
-    "coup_unrest":    {"basket": "safe_haven", "expect": {}},
-    "cyberattack":    {"basket": "safe_haven", "expect": {}},
+    "invasion":        {"basket": "energy", "expect": {"Defense contractors": "up", "Gold": "up"}},
+    "opec_supply":     {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
+    "tariffs":         {"basket": "trade",  "expect": {}},
+    "trade_deal":      {"basket": "trade",  "expect": {}},
+    "nuclear":         {"basket": "safe_haven", "expect": {"Gold": "up"}},
+    "coup_unrest":     {"basket": "safe_haven", "expect": {}},
+    "cyberattack":     {"basket": "safe_haven", "expect": {}},
     "financial_crisis":{"basket": "safe_haven", "expect": {"Gold": "up"}},
 }
 
@@ -49,9 +49,11 @@ BASKETS_BY_NAME = {
     "safe_haven": SAFE_HAVEN_BASKET,
 }
 
+DISCLAIMER = "This tool informs your decision. It does not give investment advice."
+
 
 def resolve_date_with_ai(headline, why):
-    """AI reads the event and returns the market-relevant information date (YYYY-MM-DD)."""
+    """Fallback: AI resolves the information date if detection didn't supply one."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
         msg = client.messages.create(
@@ -67,12 +69,8 @@ def resolve_date_with_ai(headline, why):
     except Exception as e:
         print(f"    (AI date call failed: {str(e)[:50]})")
         return None
-    # Fix 1: pull the first YYYY-MM-DD out of whatever the AI said
     m = re.search(r"\d{4}-\d{2}-\d{2}", text)
-    if m:
-        return m.group(0)
-    print(f"    (no date in AI reply: {text[:80]})")
-    return None
+    return m.group(0) if m else None
 
 
 def plausibility_ok(record, expect):
@@ -111,9 +109,30 @@ def publish_event(record, top):
         data=json.dumps([row]), timeout=30)
 
 
+def publish_breaking(cid, headline, etype, date, why, days_since):
+    """Publish a recent event as 'breaking' — all context, no measured reaction yet."""
+    record = {
+        "event": {"name": headline[:80], "type_label": etype,
+                  "information_date": date, "announcement_date": date, "key_metrics": []},
+        "location": {}, "sources": [], "status": "confirmed", "recency": "breaking",
+        "summary": headline,
+        "timeline": [], "reaction": [], "lasting_finding": "",
+        "timeseries": {"days": [], "series": [], "markers": []},
+        "phases": [], "historical": [], "historical_precedents": [],
+        "companies_affected": [], "companies_in_news": [],
+        "confidence": why, "disclaimer": DISCLAIMER,
+    }
+    top = {"event_id": cid, "name": headline[:80], "type_label": etype,
+           "information_date": date, "status": "confirmed", "recency": "breaking", "region": ""}
+    publish_event(record, top)
+    mark_candidate(cid, "published", f"breaking — {days_since}d old, reaction pending")
+    print(f"  PUBLISHED (breaking, {days_since}d old — no reaction yet)")
+
+
 # --- run the verifier ---
 for c in get_pending():
     cid, etype, headline = c["id"], c["event_type"], c["headline"]
+    why = c.get("source_domains", "")
     print(f"\nVerifying {cid}: {headline[:50]}")
 
     cfg = TYPE_CONFIG.get(etype)
@@ -121,85 +140,73 @@ for c in get_pending():
         mark_candidate(cid, "rejected", f"no config for type {etype}")
         print(f"  REJECTED: unsupported type {etype}"); continue
 
-    # 1. AI resolves date
-  # use the date detection already found; only ask AI if missing
+    # 1. use detection's date first; only ask AI if missing/invalid
     date = c.get("detected_date")
-    if not date or not re.match(r"\d{4}-\d{2}-\d{2}", str(date)):
-        date = resolve_date_with_ai(headline, c.get("source_domains", ""))
+    if not date or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date)):
+        date = resolve_date_with_ai(headline, why)
     if not date:
         mark_candidate(cid, "held", "could not resolve date")
         print("  HELD: date unresolved"); continue
+    date = str(date)[:10]
+    print(f"  date: {date}")
 
-    # 2. basket by type
-    basket = BASKETS_BY_NAME.get(cfg["basket"])
-    if not basket:
-        mark_candidate(cid, "held", f"no basket for {cfg['basket']}")
-        print(f"  HELD: basket {cfg['basket']} not built"); continue
-
-    # Fix 2: download window relative to the resolved date
+    # timezone-aware date math
     try:
         ev_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except Exception:
         mark_candidate(cid, "held", "date parse failed")
         print("  HELD: bad date format"); continue
-
     today_dt = datetime.now(timezone.utc)
+    days_since = (today_dt - ev_date).days
 
+    # 2. TOO RECENT (< 10 days) -> publish as breaking, no measured reaction
+    if days_since < 10:
+        publish_breaking(cid, headline, etype, date, why, days_since)
+        continue
+
+    # 3. old enough to measure -> pick basket
+    basket = BASKETS_BY_NAME.get(cfg["basket"])
+    if not basket:
+        mark_candidate(cid, "held", f"no basket for {cfg['basket']}")
+        print(f"  HELD: basket {cfg['basket']} not built"); continue
+
+    # download window relative to the event date
     dl_start = (ev_date - timedelta(days=250)).strftime("%Y-%m-%d")
     dl_end_dt = ev_date + timedelta(days=45)
     if dl_end_dt > today_dt:
         dl_end_dt = today_dt
     dl_end = dl_end_dt.strftime("%Y-%m-%d")
 
-    days_since = (today_dt - ev_date).days
-
-    # TOO RECENT: publish as "breaking" — everything except measured reaction
-    if days_since < 10:
-        breaking_record = {
-            "event": {"name": headline[:80], "type_label": etype,
-                      "information_date": date, "announcement_date": date, "key_metrics": []},
-            "location": {}, "sources": [], "status": "confirmed", "recency": "breaking",
-            "summary": headline,
-            "timeline": [], "reaction": [], "lasting_finding": "",
-            "timeseries": {"days": [], "series": [], "markers": []},
-            "phases": [], "historical": [], "historical_precedents": [],
-            "companies_affected": [], "companies_in_news": [],
-            "confidence": c.get("source_domains", ""),
-            "disclaimer": "This tool informs your decision. It does not give investment advice.",
-        }
-        breaking_top = {"event_id": cid, "name": headline[:80], "type_label": etype,
-                        "information_date": date, "status": "confirmed",
-                        "recency": "breaking", "region": ""}
-        publish_event(breaking_record, breaking_top)
-        mark_candidate(cid, "published", f"breaking — {days_since}d old, reaction pending")
-        print(f"  PUBLISHED (breaking, {days_since}d old — no reaction yet)")
-        continue
+    # partial (10-30 days) = developing; full window elapsed = settled
+    recency = "developing" if days_since < 35 else "settled"
 
     EVENT = {"event_id": cid, "name": headline[:80], "type_label": etype,
              "information_date": date, "announcement_date": date, "benchmark": "^GSPC",
              "download_start": dl_start, "download_end": dl_end,
              "snap_window": (-2, 5), "full_window": (-5, 30), "region": ""}
-    NARRATIVE = {"sources": [], "status": "confirmed", "recency": "settled",
+    NARRATIVE = {"sources": [], "status": "confirmed", "recency": recency,
                  "summary": headline, "lasting_finding": "", "key_metrics": [],
                  "timeline": [], "markers": [], "historical": [], "historical_precedents": [],
-                 "companies_in_news": [], "confidence": c.get("source_domains", "")}
+                 "companies_in_news": [], "confidence": why}
 
-    # 3. measure
+    # 4. measure
     try:
         record, top = run(EVENT, basket, {}, NARRATIVE)
     except Exception as e:
-        mark_candidate(cid, "held", f"measurement failed: {str(e)[:70]}")
-        print(f"  HELD: measurement error {str(e)[:60]}"); continue
-te
-    # 4. plausibility gate
+        # measurement failed (often too little post-event data) -> fall back to breaking
+        print(f"  measurement failed ({str(e)[:50]}) — publishing as breaking")
+        publish_breaking(cid, headline, etype, date, why, days_since)
+        continue
+
+    # 5. plausibility gate
     ok, reason = plausibility_ok(record, cfg["expect"])
     if not ok:
         mark_candidate(cid, "held", f"implausible: {reason}")
         print(f"  HELD: {reason}"); continue
 
-    # 5. PASS -> publish
+    # 6. PASS -> publish (developing or settled)
     publish_event(record, top)
-    mark_candidate(cid, "published", f"verified: {reason}")
-    print(f"  PUBLISHED ✓ ({reason})")
+    mark_candidate(cid, "published", f"{recency} — verified: {reason}")
+    print(f"  PUBLISHED ✓ ({recency}, {reason})")
 
 print("\nVerification complete.")
