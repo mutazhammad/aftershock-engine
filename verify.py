@@ -1,24 +1,27 @@
-import os, requests, json
-from datetime import datetime, timezone
+import os, re, json, requests
+from datetime import datetime, timezone, timedelta
 from anthropic import Anthropic
 from engine import run   # your existing engine
 
-CURRENTS = "https://api.currentsapi.services/v1/search"
-CURRENTS_KEY = os.environ.get("CURRENTS_API_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 client = Anthropic()
 
-# --- RULE 1: event_type -> basket + expected direction ---
+# --- RULE: event_type -> basket name + expected sector directions ---
 TYPE_CONFIG = {
     "bombing":        {"basket": "energy", "expect": {"Oil & gas producers": "up", "Defense contractors": "up"}},
     "waterway_block": {"basket": "energy", "expect": {"Oil tanker operators": "up", "Oil & gas producers": "up"}},
+    "pipeline_block": {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
     "sanctions":      {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
+    "sanctions_relief":{"basket": "energy", "expect": {}},
     "invasion":       {"basket": "energy", "expect": {"Defense contractors": "up", "Gold": "up"}},
     "opec_supply":    {"basket": "energy", "expect": {"Oil & gas producers": "up"}},
     "tariffs":        {"basket": "trade",  "expect": {}},
     "trade_deal":     {"basket": "trade",  "expect": {}},
     "nuclear":        {"basket": "safe_haven", "expect": {"Gold": "up"}},
+    "coup_unrest":    {"basket": "safe_haven", "expect": {}},
+    "cyberattack":    {"basket": "safe_haven", "expect": {}},
+    "financial_crisis":{"basket": "safe_haven", "expect": {"Gold": "up"}},
 }
 
 ENERGY_BASKET = {
@@ -28,38 +31,55 @@ ENERGY_BASKET = {
     "Gold":                 ["GLD"],
     "Airline stocks":       ["DAL", "UAL", "AAL"],
 }
-BASKETS_BY_NAME = {"energy": ENERGY_BASKET}  # add trade/safe_haven later
+TRADE_BASKET = {
+    "Industrials":    ["CAT", "DE", "BA"],
+    "Semiconductors": ["NVDA", "AMD", "INTC"],
+    "Retailers":      ["WMT", "TGT"],
+    "Broad market":   ["SPY"],
+}
+SAFE_HAVEN_BASKET = {
+    "Gold":         ["GLD"],
+    "Treasuries":   ["TLT"],
+    "Defense":      ["LMT", "RTX", "NOC"],
+    "Broad market": ["SPY"],
+}
+BASKETS_BY_NAME = {
+    "energy": ENERGY_BASKET,
+    "trade": TRADE_BASKET,
+    "safe_haven": SAFE_HAVEN_BASKET,
+}
 
 
 def resolve_date_with_ai(headline, why):
-    """AI reads the event and returns the market-relevant information date."""
+    """AI reads the event and returns the market-relevant information date (YYYY-MM-DD)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001", max_tokens=100,
-        system=("You determine the INFORMATION DATE of a market event — the first trading "
-                "day markets could realistically have known about it. Return ONLY that date "
-                "as YYYY-MM-DD, nothing else."),
-        messages=[{"role": "user", "content":
-            f"Today is {today}. Event: {headline}. Context: {why}. "
-            "What is the information date (YYYY-MM-DD)? Return only the date."}],
-    )
-    text = msg.content[0].text.strip()
-    # pull the first YYYY-MM-DD pattern out of whatever the AI said
-    import re
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=100,
+            system=("You determine the INFORMATION DATE of a market event — the first trading "
+                    "day markets could realistically have known about it. Return ONLY that date "
+                    "as YYYY-MM-DD."),
+            messages=[{"role": "user", "content":
+                f"Today is {today}. Event: {headline}. Context: {why}. "
+                "What is the information date (YYYY-MM-DD)? Return only the date."}],
+        )
+        text = msg.content[0].text.strip()
+    except Exception as e:
+        print(f"    (AI date call failed: {str(e)[:50]})")
+        return None
+    # Fix 1: pull the first YYYY-MM-DD out of whatever the AI said
     m = re.search(r"\d{4}-\d{2}-\d{2}", text)
-    if m:
-        return m.group(0)
-    return None
+    return m.group(0) if m else None
 
 
 def plausibility_ok(record, expect):
     """RULE: did the expected sectors move in the expected direction?"""
     moves = {r["sector"]: r["tone"] for r in record.get("reaction", [])}
     if not expect:
-        return True, "no directional expectation (trade-type)"
+        return True, "no directional expectation"
     matched = sum(1 for sec, direction in expect.items()
                   if moves.get(sec) == ("gain" if direction == "up" else "loss"))
-    ok = matched >= max(1, len(expect) // 2)   # at least half the expected moves match
+    ok = matched >= max(1, len(expect) // 2)
     return ok, f"{matched}/{len(expect)} expected moves matched"
 
 
@@ -105,16 +125,32 @@ for c in get_pending():
         print("  HELD: date unresolved"); continue
     print(f"  date resolved: {date}")
 
-    # 2. rules pick basket; 3. engine measures
+    # 2. basket by type
     basket = BASKETS_BY_NAME.get(cfg["basket"])
     if not basket:
         mark_candidate(cid, "held", f"no basket for {cfg['basket']}")
-        print(f"  HELD: basket {cfg['basket']} not built yet"); continue
+        print(f"  HELD: basket {cfg['basket']} not built"); continue
 
-   from datetime import timedelta
-    ev_date = datetime.strptime(date, "%Y-%m-%d")
-    dl_start = (ev_date - timedelta(days=250)).strftime("%Y-%m-%d")   # ~8 months before
-    dl_end   = (ev_date + timedelta(days=45)).strftime("%Y-%m-%d")    # ~6 weeks after
+    # Fix 2: download window relative to the resolved date
+    try:
+        ev_date = datetime.strptime(date, "%Y-%m-%d")
+    except Exception:
+        mark_candidate(cid, "held", "date parse failed")
+        print("  HELD: bad date format"); continue
+
+    dl_start = (ev_date - timedelta(days=250)).strftime("%Y-%m-%d")
+    dl_end_dt = ev_date + timedelta(days=45)
+    today_dt = datetime.now(timezone.utc)
+    # don't request future data
+    if dl_end_dt > today_dt:
+        dl_end_dt = today_dt
+    dl_end = dl_end_dt.strftime("%Y-%m-%d")
+
+    # if fewer than ~10 days have passed since the event, it's too fresh to measure fully
+    days_since = (today_dt - ev_date.replace(tzinfo=timezone.utc)).days
+    if days_since < 10:
+        mark_candidate(cid, "held", f"too recent ({days_since}d) — breaking, insufficient data")
+        print(f"  HELD: too recent ({days_since} days since event)"); continue
 
     EVENT = {"event_id": cid, "name": headline[:80], "type_label": etype,
              "information_date": date, "announcement_date": date, "benchmark": "^GSPC",
@@ -124,27 +160,12 @@ for c in get_pending():
                  "summary": headline, "lasting_finding": "", "key_metrics": [],
                  "timeline": [], "markers": [], "historical": [], "historical_precedents": [],
                  "companies_in_news": [], "confidence": c.get("source_domains", "")}
-    TRADE_BASKET = {
-    "Industrials":    ["CAT", "DE", "BA"],
-    "Semiconductors": ["NVDA", "AMD", "INTC"],
-    "Retailers":      ["WMT", "TGT"],
-    "Broad market":   ["SPY"],
-    }
-    SAFE_HAVEN_BASKET = {
-    "Gold":         ["GLD"],
-    "Treasuries":   ["TLT"],
-    "Defense":      ["LMT", "RTX", "NOC"],
-    "Broad market": ["SPY"],
-    }
-    BASKETS_BY_NAME = {
-    "energy": ENERGY_BASKET,
-    "trade": TRADE_BASKET,
-    "safe_haven": SAFE_HAVEN_BASKET,
-    }
+
+    # 3. measure
     try:
         record, top = run(EVENT, basket, {}, NARRATIVE)
     except Exception as e:
-        mark_candidate(cid, "held", f"measurement failed: {str(e)[:80]}")
+        mark_candidate(cid, "held", f"measurement failed: {str(e)[:70]}")
         print(f"  HELD: measurement error {str(e)[:60]}"); continue
 
     # 4. plausibility gate
