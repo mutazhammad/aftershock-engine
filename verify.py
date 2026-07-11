@@ -111,14 +111,36 @@ for c in get_pending():
         mark_candidate(cid, "held", f"no basket for {cfg['basket']}")
         print(f"  HELD: basket {cfg['basket']} not built yet"); continue
 
+   from datetime import timedelta
+    ev_date = datetime.strptime(date, "%Y-%m-%d")
+    dl_start = (ev_date - timedelta(days=250)).strftime("%Y-%m-%d")   # ~8 months before
+    dl_end   = (ev_date + timedelta(days=45)).strftime("%Y-%m-%d")    # ~6 weeks after
+
     EVENT = {"event_id": cid, "name": headline[:80], "type_label": etype,
              "information_date": date, "announcement_date": date, "benchmark": "^GSPC",
-             "download_start": "2024-01-01", "download_end": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+             "download_start": dl_start, "download_end": dl_end,
              "snap_window": (-2, 5), "full_window": (-5, 30), "region": ""}
     NARRATIVE = {"sources": [], "status": "confirmed", "recency": "settled",
                  "summary": headline, "lasting_finding": "", "key_metrics": [],
                  "timeline": [], "markers": [], "historical": [], "historical_precedents": [],
                  "companies_in_news": [], "confidence": c.get("source_domains", "")}
+    TRADE_BASKET = {
+    "Industrials":    ["CAT", "DE", "BA"],
+    "Semiconductors": ["NVDA", "AMD", "INTC"],
+    "Retailers":      ["WMT", "TGT"],
+    "Broad market":   ["SPY"],
+    }
+    SAFE_HAVEN_BASKET = {
+    "Gold":         ["GLD"],
+    "Treasuries":   ["TLT"],
+    "Defense":      ["LMT", "RTX", "NOC"],
+    "Broad market": ["SPY"],
+    }
+    BASKETS_BY_NAME = {
+    "energy": ENERGY_BASKET,
+    "trade": TRADE_BASKET,
+    "safe_haven": SAFE_HAVEN_BASKET,
+    }
     try:
         record, top = run(EVENT, basket, {}, NARRATIVE)
     except Exception as e:
