@@ -30,42 +30,6 @@ def phase_summary(days, path):
     return {"peak_pct": f"{peak_val:+.1f}%", "peak_day": days[peak_i],
             "reverted_by_day": reverted}
 
-
-# ---------- main ----------
-def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
-    bench = EVENT["benchmark"]
-    tickers = sorted({t for ms in BASKETS.values() for t in ms})
-
-    prices = yf.download(tickers + [bench], start=EVENT["download_start"],
-                         end=EVENT["download_end"], auto_adjust=True)["Close"]
-    rets = prices.pct_change().dropna()
-    ar = rets[tickers].sub(rets[bench], axis=0)          # market-adjusted
-
-    pos = int(rets.index.searchsorted(pd.Timestamp(EVENT["information_date"])))
-    n = len(rets)
-    s0, s1 = win_bounds(pos, *EVENT["snap_window"], n)
-    f0, f1 = win_bounds(pos, *EVENT["full_window"], n)
-    days = [i - pos for i in range(f0, f1)]
-
-    reaction, timeseries, phases = [], [], []
-    for sector, members in BASKETS.items():
-        have = [t for t in members if t in ar.columns]
-        if not have:
-            continue
-        basket_ar = ar[have].mean(axis=1)
-        snap = basket_ar.iloc[s0:s1]
-        car = float(snap.sum() * 100)
-        t = round(tstat(snap), 2)
-        path = (basket_ar.iloc[f0:f1].cumsum() * 100).round(2).tolist()
-        reaction.append({
-            "sector": sector, "tickers": ", ".join(have),
-            "pct": f"{car:+.1f}%", "significant": abs(t) >= 2.0,
-            "t_stat": t, "tone": "gain" if car >= 0 else "loss",
-        })
-        timeseries.append({"sector": sector, "car_path": path})
-        ph = phase_summary(days, path); ph["sector"] = sector
-        phases.append(ph)
-
     def volatility_analysis(rets, bench_rets, vix_series, pos, baskets, ar):
     """Measure how volatility changed after the event.
     Returns a dict with VIX move and per-sector realized-volatility ratios."""
@@ -117,6 +81,40 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         })
 
     return out
+# ---------- main ----------
+def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
+    bench = EVENT["benchmark"]
+    tickers = sorted({t for ms in BASKETS.values() for t in ms})
+
+    prices = yf.download(tickers + [bench], start=EVENT["download_start"],
+                         end=EVENT["download_end"], auto_adjust=True)["Close"]
+    rets = prices.pct_change().dropna()
+    ar = rets[tickers].sub(rets[bench], axis=0)          # market-adjusted
+
+    pos = int(rets.index.searchsorted(pd.Timestamp(EVENT["information_date"])))
+    n = len(rets)
+    s0, s1 = win_bounds(pos, *EVENT["snap_window"], n)
+    f0, f1 = win_bounds(pos, *EVENT["full_window"], n)
+    days = [i - pos for i in range(f0, f1)]
+
+    reaction, timeseries, phases = [], [], []
+    for sector, members in BASKETS.items():
+        have = [t for t in members if t in ar.columns]
+        if not have:
+            continue
+        basket_ar = ar[have].mean(axis=1)
+        snap = basket_ar.iloc[s0:s1]
+        car = float(snap.sum() * 100)
+        t = round(tstat(snap), 2)
+        path = (basket_ar.iloc[f0:f1].cumsum() * 100).round(2).tolist()
+        reaction.append({
+            "sector": sector, "tickers": ", ".join(have),
+            "pct": f"{car:+.1f}%", "significant": abs(t) >= 2.0,
+            "t_stat": t, "tone": "gain" if car >= 0 else "loss",
+        })
+        timeseries.append({"sector": sector, "car_path": path})
+        ph = phase_summary(days, path); ph["sector"] = sector
+        phases.append(ph)
 
     companies_affected = []
     for sector, members in BASKETS.items():
