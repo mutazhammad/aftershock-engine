@@ -11,7 +11,6 @@ client = Anthropic()
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
           "trade war tariffs", "invasion war", "OPEC oil", "nuclear missile"]
 
-# --- Your 17 curated events: the AI matches detected events against these ---
 CURATED = [
     ("hormuz_2026_03", "Strait of Hormuz closure", "energy supply shock"),
     ("abqaiq_2019", "Abqaiq oil-facility attack", "energy supply shock"),
@@ -31,6 +30,8 @@ CURATED = [
     ("turkey_2018_08", "Turkey currency crisis 2018", "financial crisis"),
     ("brexit_2016_06", "Brexit referendum 2016", "political shock"),
 ]
+VALID_IDS = {cid for cid, _, _ in CURATED}
+DISCLAIMER = "This tool informs your decision. It does not give investment advice."
 
 
 def gather_articles():
@@ -44,8 +45,7 @@ def gather_articles():
                     title = (a.get("title") or "").strip()
                     if title and title not in seen:
                         seen.add(title)
-                        pool.append({"title": title,
-                                     "description": (a.get("description") or "")[:250]})
+                        pool.append({"title": title, "description": (a.get("description") or "")[:250]})
             else:
                 print(f"  {topic}: Currents error {r.status_code}")
         except Exception as e:
@@ -59,84 +59,82 @@ def ai_analyze(articles):
                         for i, a in enumerate(articles[:80]))
     curated_list = "\n".join(f"- {cid} | {name} | {etype}" for cid, name, etype in CURATED)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
     system = (
-        "You are a financial-markets analyst building a library of geopolitical precedents. "
-        "From recent news, identify SIGNIFICANT market-moving events (wars, strikes on "
-        "infrastructure, sanctions, blockades, major trade deals, OPEC decisions, nuclear "
-        "escalation, coups, financial crises). Ignore sports, entertainment, local news, "
-        "and pure speculation. For each, write transparent analysis and match it to any of "
-        "the analyst's existing measured events that it is a meaningful PRECEDENT for "
-        "(same mechanism/sector/region). Be honest about date uncertainty."
+        "You are a financial-markets analyst. From recent news, identify SIGNIFICANT "
+        "market-moving geopolitical events. Ignore sports, entertainment, local news, and "
+        "pure speculation. For each, write transparent analysis and match it to the "
+        "analyst's existing measured events it is a meaningful PRECEDENT for (same "
+        "mechanism/sector/region). Be honest about date uncertainty."
     )
     user = (
         f"Today is {today}.\n\nRECENT HEADLINES:\n{listing}\n\n"
-        f"THE ANALYST'S 17 MEASURED EVENTS (id | name | type):\n{curated_list}\n\n"
-        "Return ONLY a JSON array. For each significant event:\n"
+        f"THE ANALYST'S 17 MEASURED PRECEDENTS (id | name | type):\n{curated_list}\n\n"
+        "Return ONLY a JSON array. Each significant event:\n"
         '{"event_type":"waterway_block|pipeline_block|sanctions|sanctions_relief|bombing|'
-        'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|'
-        'financial_crisis",'
-        ' "headline":"the actual headline",'
+        'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",'
+        ' "headline":"actual headline",'
         ' "event_date":"YYYY-MM-DD or best estimate",'
-        ' "date_explanation":"what the article says about timing and how certain the date '
-        'is — be transparent (e.g. explicit date given, inferred from \'last week\', or a '
-        'future/expected event)",'
+        ' "date_explanation":"what the article says about timing and how certain — be transparent",'
         ' "what_happened":"2-3 sentences on what the article specifically reports",'
-        ' "timing_note":"when it happened, or when it is expected to happen",'
+        ' "timing_note":"when it happened or is expected",'
         ' "why_significant":"one line on market relevance",'
-        ' "matched_events":["curated_id", ...]}  '
-        "matched_events = the ids of measured events this is a genuine precedent for "
-        "(empty array if none fit). Return only the JSON."
+        ' "matched_precedents":["curated_id", ...]}  '
+        "matched_precedents = ids of measured events this is a genuine precedent for "
+        "(empty if none). Return only JSON."
     )
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001", max_tokens=4000,
-        system=system, messages=[{"role": "user", "content": user}],
-    )
+    msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=4000,
+        system=system, messages=[{"role": "user", "content": user}])
     text = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(text)
     except Exception:
-        print("  AI returned non-JSON:", text[:150])
-        return []
+        print("  AI returned non-JSON:", text[:150]); return []
 
 
-def save_pool(p):
-    resp = requests.post(f"{SUPABASE_URL}/rest/v1/precedent_pool",
-        params={"on_conflict": "id"},
+def publish_feed_event(cid, e, matches):
+    """Write a detected event to the FEED (events table) as breaking, with matched precedents."""
+    record = {
+        "event": {"name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
+                  "information_date": e.get("event_date", ""), "announcement_date": "",
+                  "key_metrics": []},
+        "location": {}, "sources": [], "status": "confirmed", "recency": "breaking",
+        "summary": e.get("what_happened", ""),
+        "date_explanation": e.get("date_explanation", ""),
+        "timing_note": e.get("timing_note", ""),
+        "why_significant": e.get("why_significant", ""),
+        "timeline": [], "reaction": [], "lasting_finding": "",
+        "timeseries": {"days": [], "series": [], "markers": []}, "phases": [],
+        "historical": [], "historical_precedents": [],
+        "matched_precedents": matches,           # ← curated IDs the site shows as precedents
+        "companies_affected": [], "companies_in_news": [],
+        "confidence": "Breaking event — market reaction not yet measured. See historical precedents for how similar events behaved.",
+        "disclaimer": DISCLAIMER,
+    }
+    top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
+           "information_date": e.get("event_date", "") or None, "status": "confirmed",
+           "recency": "breaking", "region": ""}
+    row = {**top, "data": record}
+    resp = requests.post(f"{SUPABASE_URL}/rest/v1/events", params={"on_conflict": "id"},
         headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
                  "Content-Type": "application/json",
                  "Prefer": "resolution=merge-duplicates,return=minimal"},
-        data=json.dumps([p]), timeout=30)
+        data=json.dumps([row]), timeout=30)
     print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: "
-          f"{p['id']} -> {p['matched_events'] or '(no match)'}")
+          f"{cid} -> precedents: {matches or '(none)'}")
 
 
-# --- run ---
 print("Gathering articles...")
 pool = gather_articles()
 print(f"  {len(pool)} unique articles")
 
-print("AI analyzing + matching to curated events...")
+print("AI analyzing + matching precedents...")
 events = ai_analyze(pool)
 print(f"  AI produced {len(events)} events")
 
 wk = datetime.now(timezone.utc).strftime("%Y%W")
 for i, e in enumerate(events):
     etype = e.get("event_type", "other")
-    matches = e.get("matched_events", [])
-    # only keep valid curated ids
-    valid_ids = {cid for cid, _, _ in CURATED}
-    matches = [m for m in matches if m in valid_ids]
-    save_pool({
-        "id": f"{etype}_{i}_{wk}",
-        "headline": e.get("headline", "").strip(),
-        "event_type": etype,
-        "event_date": e.get("event_date", ""),
-        "date_explanation": e.get("date_explanation", "")[:500],
-        "what_happened": e.get("what_happened", "")[:600],
-        "timing_note": e.get("timing_note", "")[:300],
-        "why_significant": e.get("why_significant", "")[:300],
-        "matched_events": ", ".join(matches),
-    })
+    matches = [m for m in e.get("matched_precedents", []) if m in VALID_IDS]
+    publish_feed_event(f"{etype}_{i}_{wk}", e, matches)
 
 print("Detection complete.")
