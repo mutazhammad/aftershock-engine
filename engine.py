@@ -91,6 +91,9 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
     rets = prices.pct_change().dropna()
     ar = rets[tickers].sub(rets[bench], axis=0)          # market-adjusted
 
+    # VIX level series (not returns — we want the actual fear index level)
+    vix_series = prices["^VIX"].reindex(rets.index) if "^VIX" in prices.columns else None
+
     pos = int(rets.index.searchsorted(pd.Timestamp(EVENT["information_date"])))
     n = len(rets)
     s0, s1 = win_bounds(pos, *EVENT["snap_window"], n)
