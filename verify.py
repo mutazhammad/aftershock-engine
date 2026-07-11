@@ -133,21 +133,21 @@ for c in get_pending():
 
     # Fix 2: download window relative to the resolved date
     try:
-        ev_date = datetime.strptime(date, "%Y-%m-%d")
+        ev_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except Exception:
         mark_candidate(cid, "held", "date parse failed")
         print("  HELD: bad date format"); continue
 
+    today_dt = datetime.now(timezone.utc)
+
     dl_start = (ev_date - timedelta(days=250)).strftime("%Y-%m-%d")
     dl_end_dt = ev_date + timedelta(days=45)
-    today_dt = datetime.now(timezone.utc)
-    # don't request future data
     if dl_end_dt > today_dt:
         dl_end_dt = today_dt
     dl_end = dl_end_dt.strftime("%Y-%m-%d")
 
     # if fewer than ~10 days have passed since the event, it's too fresh to measure fully
-    days_since = (today_dt - ev_date.replace(tzinfo=timezone.utc)).days
+    days_since = (today_dt - ev_date).days
     if days_since < 10:
         mark_candidate(cid, "held", f"too recent ({days_since}d) — breaking, insufficient data")
         print(f"  HELD: too recent ({days_since} days since event)"); continue
