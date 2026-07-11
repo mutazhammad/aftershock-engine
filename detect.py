@@ -91,8 +91,90 @@ def ai_analyze(articles):
         print("  AI returned non-JSON:", text[:150]); return []
 
 
+def fetch_precedent_data(ids):
+    """Pull the measured records for the matched curated precedents."""
+    if not ids:
+        return []
+    id_list = ",".join(f'"{i}"' for i in ids)
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/curated_precedents",
+            params={"id": f"in.({id_list})", "select": "id,name,information_date,data"},
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            timeout=30)
+        return r.json() if r.status_code == 200 else []
+    except Exception as e:
+        print(f"    (precedent fetch failed: {str(e)[:50]})")
+        return []
+
+
+def build_expectation(matched_ids):
+    """From the matched precedents' REAL measured data, compute honest historical averages.
+    These are what ACTUALLY happened in comparable events — not a forecast."""
+    precedents = fetch_precedent_data(matched_ids)
+    if not precedents:
+        return None
+
+    sector_moves = {}       # sector -> list of (pct, significant)
+    vix_changes = []
+    vol_ratios = []
+    used = []
+
+    for p in precedents:
+        d = p.get("data") or {}
+        used.append({"id": p.get("id", ""), "name": p.get("name", ""),
+                     "date": str(p.get("information_date", ""))[:10]})
+
+        for r in d.get("reaction", []):
+            try:
+                pct = float(str(r.get("pct", "0")).replace("%", "").replace("+", ""))
+            except Exception:
+                continue
+            sector_moves.setdefault(r.get("sector", "?"), []).append((pct, bool(r.get("significant"))))
+
+        vol = d.get("volatility") or {}
+        vix = vol.get("vix")
+        if vix and vix.get("change_pct"):
+            try:
+                vix_changes.append(float(str(vix["change_pct"]).replace("%", "").replace("+", "")))
+            except Exception:
+                pass
+        for s in vol.get("sectors", []):
+            if s.get("ratio"):
+                try:
+                    vol_ratios.append(float(s["ratio"]))
+                except Exception:
+                    pass
+
+    sector_averages = []
+    for sector, entries in sector_moves.items():
+        pcts = [e[0] for e in entries]
+        n_sig = sum(1 for e in entries if e[1])
+        avg = sum(pcts) / len(pcts)
+        sector_averages.append({
+            "sector": sector,
+            "avg_move": f"{avg:+.1f}%",
+            "n_events": len(entries),
+            "n_significant": n_sig,
+            "direction": "gain" if avg >= 0 else "loss",
+            "consistency": f"{n_sig} of {len(entries)} were statistically significant",
+        })
+    sector_averages.sort(key=lambda x: abs(float(x["avg_move"].replace("%", ""))), reverse=True)
+
+    return {
+        "based_on": used,
+        "sector_averages": sector_averages,
+        "avg_vix_change": (f"{sum(vix_changes)/len(vix_changes):+.0f}%" if vix_changes else None),
+        "avg_volatility_ratio": (round(sum(vol_ratios) / len(vol_ratios), 2) if vol_ratios else None),
+        "caveat": ("These figures are what actually happened in comparable historical events, "
+                   "measured from market data. They are NOT a forecast of what will happen now. "
+                   "This event is too recent to measure."),
+    }
+
+
 def publish_feed_event(cid, e, matches):
-    """Write a detected event to the FEED (events table) as breaking, with matched precedents."""
+    """Write a detected event to the FEED as breaking, with precedents + historical expectation."""
+    expectation = build_expectation(matches)
+
     record = {
         "event": {"name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
                   "information_date": e.get("event_date", ""), "announcement_date": "",
@@ -104,25 +186,36 @@ def publish_feed_event(cid, e, matches):
         "why_significant": e.get("why_significant", ""),
         "timeline": [], "reaction": [], "lasting_finding": "",
         "timeseries": {"days": [], "series": [], "markers": []}, "phases": [],
+        "volatility": None,                          # not measurable yet — honest
         "historical": [], "historical_precedents": [],
-        "matched_precedents": matches,           # ← curated IDs the site shows as precedents
+        "matched_precedents": matches,
+        "precedent_expectation": expectation,        # ← the analytical depth
         "companies_affected": [], "companies_in_news": [],
-        "confidence": "Breaking event — market reaction not yet measured. See historical precedents for how similar events behaved.",
+        "confidence": ("Breaking event — the market reaction has not happened yet and cannot be "
+                       "measured. The historical precedents below show what actually occurred in "
+                       "comparable past events."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
            "information_date": e.get("event_date", "") or None, "status": "confirmed",
            "recency": "breaking", "region": ""}
     row = {**top, "data": record}
+
     resp = requests.post(f"{SUPABASE_URL}/rest/v1/events", params={"on_conflict": "id"},
         headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
                  "Content-Type": "application/json",
                  "Prefer": "resolution=merge-duplicates,return=minimal"},
         data=json.dumps([row]), timeout=30)
-    print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: "
-          f"{cid} -> precedents: {matches or '(none)'}")
+
+    n_prec = len(expectation["based_on"]) if expectation else 0
+    status = "SAVED" if resp.status_code < 300 else f"error {resp.status_code}"
+    print(f"  {status}: {cid} -> {n_prec} precedents, "
+          f"expectation {'✓' if expectation else '✗'}")
+    if resp.status_code >= 300:
+        print(f"    {resp.text[:150]}")
 
 
+# --- run ---
 print("Gathering articles...")
 pool = gather_articles()
 print(f"  {len(pool)} unique articles")
