@@ -8,9 +8,13 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 client = Anthropic()
 
+AUTH = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+DISCLAIMER = "This tool informs your decision. It does not give investment advice."
+
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
           "trade war tariffs", "invasion war", "OPEC oil", "nuclear missile"]
 
+# The original hand-measured library (lives in curated_precedents)
 CURATED = [
     ("hormuz_2026_03", "Strait of Hormuz closure", "energy supply shock"),
     ("abqaiq_2019", "Abqaiq oil-facility attack", "energy supply shock"),
@@ -30,8 +34,22 @@ CURATED = [
     ("turkey_2018_08", "Turkey currency crisis 2018", "financial crisis"),
     ("brexit_2016_06", "Brexit referendum 2016", "political shock"),
 ]
-VALID_IDS = {cid for cid, _, _ in CURATED}
-DISCLAIMER = "This tool informs your decision. It does not give investment advice."
+
+
+def get_all_precedents():
+    """The GROWING precedent library: the curated 17 + any feed events that have matured
+    to settled. A matured event becomes evidence for the next breaking one."""
+    prec = list(CURATED)
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/events",
+            params={"recency": "eq.settled", "select": "id,name,type_label"},
+            headers=AUTH, timeout=30)
+        if r.status_code == 200:
+            for e in r.json():
+                prec.append((e["id"], (e.get("name") or "")[:70], e.get("type_label", "")))
+    except Exception as e:
+        print(f"  (matured-precedent fetch failed: {str(e)[:40]})")
+    return prec
 
 
 def gather_articles():
@@ -45,7 +63,8 @@ def gather_articles():
                     title = (a.get("title") or "").strip()
                     if title and title not in seen:
                         seen.add(title)
-                        pool.append({"title": title, "description": (a.get("description") or "")[:250]})
+                        pool.append({"title": title,
+                                     "description": (a.get("description") or "")[:250]})
             else:
                 print(f"  {topic}: Currents error {r.status_code}")
         except Exception as e:
@@ -54,10 +73,10 @@ def gather_articles():
     return pool
 
 
-def ai_analyze(articles):
+def ai_analyze(articles, precedent_list):
     listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
                         for i, a in enumerate(articles[:80]))
-    curated_list = "\n".join(f"- {cid} | {name} | {etype}" for cid, name, etype in CURATED)
+    prec_lines = "\n".join(f"- {cid} | {name} | {etype}" for cid, name, etype in precedent_list)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system = (
         "You are a financial-markets analyst. From recent news, identify SIGNIFICANT "
@@ -68,7 +87,7 @@ def ai_analyze(articles):
     )
     user = (
         f"Today is {today}.\n\nRECENT HEADLINES:\n{listing}\n\n"
-        f"THE ANALYST'S 17 MEASURED PRECEDENTS (id | name | type):\n{curated_list}\n\n"
+        f"THE ANALYST'S MEASURED PRECEDENTS (id | name | type):\n{prec_lines}\n\n"
         "Return ONLY a JSON array. Each significant event:\n"
         '{"event_type":"waterway_block|pipeline_block|sanctions|sanctions_relief|bombing|'
         'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",'
@@ -78,7 +97,7 @@ def ai_analyze(articles):
         ' "what_happened":"2-3 sentences on what the article specifically reports",'
         ' "timing_note":"when it happened or is expected",'
         ' "why_significant":"one line on market relevance",'
-        ' "matched_precedents":["curated_id", ...]}  '
+        ' "matched_precedents":["precedent_id", ...]}  '
         "matched_precedents = ids of measured events this is a genuine precedent for "
         "(empty if none). Return only JSON."
     )
@@ -88,23 +107,37 @@ def ai_analyze(articles):
     try:
         return json.loads(text)
     except Exception:
-        print("  AI returned non-JSON:", text[:150]); return []
+        print("  AI returned non-JSON:", text[:150])
+        return []
 
 
 def fetch_precedent_data(ids):
-    """Pull the measured records for the matched curated precedents."""
+    """Pull measured records for matched precedents — from BOTH the curated library
+    and matured feed events."""
     if not ids:
         return []
     id_list = ",".join(f'"{i}"' for i in ids)
-    try:
-        r = requests.get(f"{SUPABASE_URL}/rest/v1/curated_precedents",
-            params={"id": f"in.({id_list})", "select": "id,name,information_date,data"},
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            timeout=30)
-        return r.json() if r.status_code == 200 else []
-    except Exception as e:
-        print(f"    (precedent fetch failed: {str(e)[:50]})")
-        return []
+    found = []
+    for table in ("curated_precedents", "events"):
+        try:
+            r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}",
+                params={"id": f"in.({id_list})", "select": "id,name,information_date,data"},
+                headers=AUTH, timeout=30)
+            if r.status_code == 200:
+                for row in r.json():
+                    d = row.get("data") or {}
+                    # only use it as a precedent if it has actually been measured
+                    if d.get("reaction"):
+                        found.append(row)
+        except Exception as e:
+            print(f"    (precedent fetch from {table} failed: {str(e)[:40]})")
+    # de-duplicate by id
+    seen, out = set(), []
+    for row in found:
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            out.append(row)
+    return out
 
 
 def build_expectation(matched_ids):
@@ -114,10 +147,7 @@ def build_expectation(matched_ids):
     if not precedents:
         return None
 
-    sector_moves = {}       # sector -> list of (pct, significant)
-    vix_changes = []
-    vol_ratios = []
-    used = []
+    sector_moves, vix_changes, vol_ratios, used = {}, [], [], []
 
     for p in precedents:
         d = p.get("data") or {}
@@ -129,7 +159,8 @@ def build_expectation(matched_ids):
                 pct = float(str(r.get("pct", "0")).replace("%", "").replace("+", ""))
             except Exception:
                 continue
-            sector_moves.setdefault(r.get("sector", "?"), []).append((pct, bool(r.get("significant"))))
+            sector_moves.setdefault(r.get("sector", "?"), []).append(
+                (pct, bool(r.get("significant"))))
 
         vol = d.get("volatility") or {}
         vix = vol.get("vix")
@@ -139,11 +170,11 @@ def build_expectation(matched_ids):
             except Exception:
                 pass
         for s in vol.get("sectors", []):
-            if s.get("ratio"):
-                try:
+            try:
+                if s.get("ratio"):
                     vol_ratios.append(float(s["ratio"]))
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     sector_averages = []
     for sector, entries in sector_moves.items():
@@ -172,8 +203,10 @@ def build_expectation(matched_ids):
 
 
 def publish_feed_event(cid, e, matches):
-    """Write a detected event to the FEED as breaking, with precedents + historical expectation."""
+    """Write a NEW detected event to the feed as breaking. Never overwrites an existing
+    (possibly already-matured) event — ignore-duplicates protects matured analysis."""
     expectation = build_expectation(matches)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     record = {
         "event": {"name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -184,16 +217,18 @@ def publish_feed_event(cid, e, matches):
         "date_explanation": e.get("date_explanation", ""),
         "timing_note": e.get("timing_note", ""),
         "why_significant": e.get("why_significant", ""),
+        "db_date": now,                              # when it entered the archive
         "timeline": [], "reaction": [], "lasting_finding": "",
         "timeseries": {"days": [], "series": [], "markers": []}, "phases": [],
         "volatility": None,                          # not measurable yet — honest
         "historical": [], "historical_precedents": [],
         "matched_precedents": matches,
-        "precedent_expectation": expectation,        # ← the analytical depth
+        "precedent_expectation": expectation,
         "companies_affected": [], "companies_in_news": [],
         "confidence": ("Breaking event — the market reaction has not happened yet and cannot be "
                        "measured. The historical precedents below show what actually occurred in "
-                       "comparable past events."),
+                       "comparable past events. This analysis will deepen automatically as market "
+                       "data accumulates."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -202,32 +237,10 @@ def publish_feed_event(cid, e, matches):
     row = {**top, "data": record}
 
     resp = requests.post(f"{SUPABASE_URL}/rest/v1/events", params={"on_conflict": "id"},
-        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
-                 "Content-Type": "application/json",
-                 "Prefer": "resolution=merge-duplicates,return=minimal"},
+        headers={**AUTH, "Content-Type": "application/json",
+                 "Prefer": "resolution=ignore-duplicates,return=minimal"},   # ← protects matured events
         data=json.dumps([row]), timeout=30)
 
     n_prec = len(expectation["based_on"]) if expectation else 0
     status = "SAVED" if resp.status_code < 300 else f"error {resp.status_code}"
-    print(f"  {status}: {cid} -> {n_prec} precedents, "
-          f"expectation {'✓' if expectation else '✗'}")
-    if resp.status_code >= 300:
-        print(f"    {resp.text[:150]}")
-
-
-# --- run ---
-print("Gathering articles...")
-pool = gather_articles()
-print(f"  {len(pool)} unique articles")
-
-print("AI analyzing + matching precedents...")
-events = ai_analyze(pool)
-print(f"  AI produced {len(events)} events")
-
-wk = datetime.now(timezone.utc).strftime("%Y%W")
-for i, e in enumerate(events):
-    etype = e.get("event_type", "other")
-    matches = [m for m in e.get("matched_precedents", []) if m in VALID_IDS]
-    publish_feed_event(f"{etype}_{i}_{wk}", e, matches)
-
-print("Detection complete.")
+    print(f"  {status}: {cid} -> {n_prec} precedents, expectation {'✓' if expectation else
