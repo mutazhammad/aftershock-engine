@@ -122,11 +122,13 @@ for c in get_pending():
         print(f"  REJECTED: unsupported type {etype}"); continue
 
     # 1. AI resolves date
-    date = resolve_date_with_ai(headline, c.get("source_domains", ""))
+  # use the date detection already found; only ask AI if missing
+    date = c.get("detected_date")
+    if not date or not re.match(r"\d{4}-\d{2}-\d{2}", str(date)):
+        date = resolve_date_with_ai(headline, c.get("source_domains", ""))
     if not date:
         mark_candidate(cid, "held", "could not resolve date")
         print("  HELD: date unresolved"); continue
-    print(f"  date resolved: {date}")
 
     # 2. basket by type
     basket = BASKETS_BY_NAME.get(cfg["basket"])
@@ -188,7 +190,7 @@ for c in get_pending():
     except Exception as e:
         mark_candidate(cid, "held", f"measurement failed: {str(e)[:70]}")
         print(f"  HELD: measurement error {str(e)[:60]}"); continue
-
+te
     # 4. plausibility gate
     ok, reason = plausibility_ok(record, cfg["expect"])
     if not ok:
