@@ -1,6 +1,6 @@
 from engine import run
 from events import EVENTS
-from db import write_event
+from db_curated import write_event
 
 for cfg in EVENTS:
     print(f"Measuring {cfg['event_id']}...")
