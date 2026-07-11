@@ -243,4 +243,30 @@ def publish_feed_event(cid, e, matches):
 
     n_prec = len(expectation["based_on"]) if expectation else 0
     status = "SAVED" if resp.status_code < 300 else f"error {resp.status_code}"
-    print(f"  {status}: {cid} -> {n_prec} precedents, expectation {'✓' if expectation else
+    print(f"  {status}: {cid} -> {n_prec} precedents, expectation {'✓' if expectation else '✗'}")
+    if resp.status_code >= 300:
+        print(f"    {resp.text[:150]}")
+
+
+# --- run ---
+print("Building precedent library...")
+precedent_list = get_all_precedents()
+valid_ids = {cid for cid, _, _ in precedent_list}
+print(f"  {len(precedent_list)} precedents available "
+      f"({len(CURATED)} curated + {len(precedent_list) - len(CURATED)} matured)")
+
+print("Gathering articles...")
+pool = gather_articles()
+print(f"  {len(pool)} unique articles")
+
+print("AI analyzing + matching precedents...")
+events = ai_analyze(pool, precedent_list)
+print(f"  AI produced {len(events)} events")
+
+wk = datetime.now(timezone.utc).strftime("%Y%W")
+for i, e in enumerate(events):
+    etype = e.get("event_type", "other")
+    matches = [m for m in e.get("matched_precedents", []) if m in valid_ids]
+    publish_feed_event(f"{etype}_{i}_{wk}", e, matches)
+
+print("Detection complete.")
