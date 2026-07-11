@@ -34,23 +34,27 @@ def gather_articles():
 def ai_pick_events(articles):
     listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
                         for i, a in enumerate(articles[:80]))
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system = (
-        "You are a financial-markets analyst. From news headlines, identify the most "
-        "SIGNIFICANT geopolitical events likely to move financial markets (wars, strikes "
-        "on infrastructure, sanctions, blockades, major trade deals, OPEC decisions, "
-        "nuclear escalation, coups). IGNORE sports, entertainment, local news, opinion, "
-        "and non-market news. Only REAL events that actually happened."
+        "You are a financial-markets analyst. From news headlines, identify ALL "
+        "SIGNIFICANT geopolitical events from the past 7 days that are likely to move "
+        "financial markets (wars, strikes on infrastructure, sanctions, blockades, major "
+        "trade deals, OPEC decisions, nuclear escalation, coups). IGNORE sports, "
+        "entertainment, local news, opinion, and speculation. Only REAL events that "
+        "actually happened, each with a clear date."
     )
     user = (
-        f"Recent headlines:\n\n{listing}\n\n"
-        "Return ONLY a JSON array of up to 6 most significant market-moving events, each: "
+        f"Today is {today}. Recent headlines:\n\n{listing}\n\n"
+        "Return ONLY a JSON array of ALL significant market-moving events from the past 7 "
+        "days, each: "
         '{"event_type":"one of: waterway_block, pipeline_block, sanctions, sanctions_relief, '
         'bombing, invasion, trade_deal, tariffs, opec_supply, nuclear, coup_unrest, '
         'cyberattack, financial_crisis", "headline":"actual headline", '
-        '"why_significant":"one line"}. If none qualify, return []. Only the JSON.'
+        '"event_date":"YYYY-MM-DD when it happened", "why_significant":"one line"}. '
+        "Include every qualifying event, not just the top few. If none, return []. Only the JSON."
     )
     msg = client.messages.create(
-        model="claude-haiku-4-5-20251001", max_tokens=1500,
+        model="claude-haiku-4-5-20251001", max_tokens=2000,
         system=system, messages=[{"role": "user", "content": user}],
     )
     text = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
@@ -88,7 +92,7 @@ for i, e in enumerate(events):
         "id": f"{etype}_{i}_{wk}",
         "headline": e.get("headline", "").strip(),
         "event_type": etype,
-        "detected_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "detected_date": e.get("event_date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
         "coverage_count": 0,
         "source_domains": e.get("why_significant", "")[:200],
         "status": "pending",
