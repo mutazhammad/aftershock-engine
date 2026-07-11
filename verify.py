@@ -43,12 +43,13 @@ def resolve_date_with_ai(headline, why):
             f"Today is {today}. Event: {headline}. Context: {why}. "
             "What is the information date (YYYY-MM-DD)? Return only the date."}],
     )
-    text = msg.content[0].text.strip()[:10]
-    try:
-        datetime.strptime(text, "%Y-%m-%d")
-        return text
-    except Exception:
-        return None
+    text = msg.content[0].text.strip()
+    # pull the first YYYY-MM-DD pattern out of whatever the AI said
+    import re
+    m = re.search(r"\d{4}-\d{2}-\d{2}", text)
+    if m:
+        return m.group(0)
+    return None
 
 
 def plausibility_ok(record, expect):
