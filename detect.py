@@ -10,8 +10,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 AUTH = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 client = Anthropic()
 
-FAST = "claude-haiku-4-5-20251001"        # detection, research
-DEEP = "claude-sonnet-4-6"                # the Important Notes reasoning pass
+MODEL = "claude-haiku-4-5-20251001"      # everything runs on Haiku
 
 DISCLAIMER = "This tool informs your decision. It does not give investment advice."
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
@@ -55,8 +54,8 @@ TICKER_START = {"STNG": 2010, "FRO": 2001, "INSW": 2017, "XOM": 1990, "CVX": 199
     "BAC": 1990}
 
 
-def ask(model, system, user, max_tokens=3000):
-    msg = client.messages.create(model=model, max_tokens=max_tokens,
+def ask(system, user, max_tokens=3000):
+    msg = client.messages.create(model=MODEL, max_tokens=max_tokens,
                                  system=system, messages=[{"role": "user", "content": user}])
     return msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
 
@@ -103,7 +102,7 @@ def gather_articles():
 
 
 def ai_find_events(articles):
-    """Identify significant events with a DEEP analysis and named companies."""
+    """Identify significant events with deep analysis and named companies."""
     listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
                         for i, a in enumerate(articles[:80]))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -112,7 +111,7 @@ def ai_find_events(articles):
         "professionals. Identify SIGNIFICANT market-moving events from recent news. "
         "Ignore sports, entertainment, local news, opinion, and speculation. Write with "
         "analytical depth: explain the mechanism by which the event transmits to markets, "
-        "not just what happened. Name the specific companies exposed and explain HOW each "
+        "not just what happened. Name the specific companies exposed and explain how each "
         "is exposed. Never use em dashes or en dashes in your prose."
     )
     user = (
@@ -128,7 +127,7 @@ def ai_find_events(articles):
         'consequences. Be specific and substantive.",\n'
         ' "transmission_mechanism":"THREE TO FIVE sentences explaining the causal chain from '
         'this event to market prices. Which physical or financial channel carries the shock, '
-        'which inputs get more expensive or scarce, and which margins are squeezed or widened.",\n'
+        'which inputs get scarcer or more expensive, and which margins are squeezed or widened.",\n'
         ' "timing_note":"when it happened, or when it is expected to happen",\n'
         ' "why_significant":"one line on market relevance",\n'
         ' "companies_involved":[{"ticker":"XOM","name":"ExxonMobil","role":"How this specific '
@@ -136,10 +135,10 @@ def ai_find_events(articles):
         'which route, which contract, which input cost.","exposure":"direct|indirect|beneficiary"}],\n'
         ' "region":"the affected region",\n'
         ' "location":{"center":[longitude,latitude],"zoom":5}}\n\n'
-        "companies_involved should list 4 to 8 specific listed companies. Include both those "
+        "companies_involved should list 4 to 8 specific listed companies, including both those "
         "hurt and those who benefit. Use real tickers. Only JSON."
     )
-    text = ask(FAST, system, user, max_tokens=8000)
+    text = ask(system, user, max_tokens=8000)
     try:
         return json.loads(text)
     except Exception:
@@ -170,61 +169,53 @@ def ai_research_precedents(event):
         'event, focusing on the shared transmission mechanism",'
         ' "region":"region"}]  Only JSON.'
     )
-    text = ask(FAST, system, user, max_tokens=2500)
+    text = ask(system, user, max_tokens=2500)
     try:
         return json.loads(text)
     except Exception:
         return []
 
 
-# ---------- IMPORTANT NOTES: what makes this event different ----------
+# ---------- IMPORTANT NOTES ----------
 def ai_important_notes(event, prec_rows):
-    """The reasoning pass. What has changed between the precedents and now that would
-    alter the market response? Uses the stronger model."""
+    """What differs between the precedents and today that would change the market response."""
     if not prec_rows:
         return None
 
     prec_desc = "\n".join(
-        f"- {p['id']} | {p.get('name','')} | {str(p.get('information_date',''))[:10]}\n"
-        f"    Measured: " + ", ".join(
-            f"{r['sector']} {r['pct']}" + (" (significant)" if r.get("significant") else "")
-            for r in (p.get("data") or {}).get("reaction", [])[:5])
+        f"- {p['id']} | {p.get('name','')} | {str(p.get('information_date',''))[:10]}"
         for p in prec_rows)
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system = (
-        "You are a senior markets strategist. Your job is to identify why a historical "
-        "precedent may NOT translate cleanly to a current event. This is the most important "
-        "analytical work in the report: the differences that would change the market response. "
-        "Think about structural change in the underlying market, policy and monetary regime, "
-        "changes in market structure and which firms are exposed, confounding events that "
-        "contaminated the precedent's measurement, differences in scale and severity, and "
-        "changes in regional dynamics and actors. Be specific and concrete. Cite real "
-        "structural changes, not vague generalities. Never use em dashes or en dashes."
+        "You are a markets strategist. Identify why a historical precedent may not translate "
+        "cleanly to a current event. Focus on concrete differences: structural change in the "
+        "underlying market, policy or monetary regime, which firms are exposed now versus then, "
+        "confounding events that contaminated the precedent, differences in scale and severity, "
+        "and changes in regional actors and dynamics. Be specific. Cite real changes, not vague "
+        "generalities. Never use em dashes or en dashes."
     )
     user = (
         f"Today is {today}.\n\n"
         f"CURRENT EVENT:\n{event.get('headline','')}\n"
         f"Type: {event.get('event_type','')}\n"
         f"Region: {event.get('region','')}\n"
-        f"What happened: {event.get('what_happened','')}\n"
-        f"Mechanism: {event.get('transmission_mechanism','')}\n\n"
-        f"MEASURED PRECEDENTS BEING USED:\n{prec_desc}\n\n"
+        f"What happened: {event.get('what_happened','')}\n\n"
+        f"PRECEDENTS BEING USED:\n{prec_desc}\n\n"
         "Return ONLY JSON:\n"
-        '{"overall_applicability":"THREE TO FIVE sentences assessing how well this precedent '
-        'set applies to the current event as a whole. Be direct about where the comparison is '
-        'strong and where it breaks down.",\n'
-        ' "notes":[{"title":"Short title for the note",'
+        '{"overall_applicability":"THREE TO FIVE sentences on how well this precedent set '
+        'applies to the current event. Be direct about where the comparison is strong and '
+        'where it breaks down.",\n'
+        ' "notes":[{"title":"Short title",'
         ' "category":"structural|regime|market_structure|confounding|scale|regional",'
-        ' "detail":"TWO TO FOUR sentences. A specific, concrete difference between the '
-        'precedent conditions and today that would change the market response. Name the '
-        'change and explain its directional effect on the expected reaction.",'
+        ' "detail":"TWO TO FOUR sentences. A specific difference between the precedent '
+        'conditions and today that would change the market response. Name the change and its '
+        'directional effect.",'
         ' "affects":["precedent_id", ...],'
         ' "direction":"amplifies|dampens|uncertain"}]}\n\n'
-        "Produce 3 to 6 notes. Each must be a REAL structural difference, not a generic "
-        "caveat. Only JSON."
+        "Produce 3 to 5 notes. Each must be a real difference, not a generic caveat. Only JSON."
     )
-    text = ask(DEEP, system, user, max_tokens=3000)
+    text = ask(system, user, max_tokens=2500)
     try:
         return json.loads(text)
     except Exception as e:
@@ -277,8 +268,8 @@ def measure_precedent(p, etype):
 
     cached = cache_get(pid)
     if cached and (cached.get("data") or {}).get("reaction"):
-        d = cached["data"]
-        d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
+        cached["data"]["why_relevant"] = p.get("why_relevant",
+                                               cached["data"].get("why_relevant", ""))
         return cached, "cached"
 
     ev = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -326,7 +317,7 @@ def build_expectation(prec_rows):
     if not prec_rows:
         return None
     sector_moves, vix_changes, vol_ratios, used = {}, [], [], []
-    per_precedent = []          # individual results, for the dot plot
+    per_precedent = []
 
     for p in prec_rows:
         d = p.get("data") or {}
@@ -344,12 +335,10 @@ def build_expectation(prec_rows):
                          "significant": bool(r.get("significant")), "t_stat": r.get("t_stat")})
         vol = d.get("volatility") or {}
         vix = vol.get("vix")
-        per_precedent.append({
-            "id": p["id"], "name": p.get("name", ""),
-            "date": str(p.get("information_date", ""))[:10],
-            "moves": rows,
-            "vix_change": (vix or {}).get("change_pct"),
-        })
+        per_precedent.append({"id": p["id"], "name": p.get("name", ""),
+                              "date": str(p.get("information_date", ""))[:10],
+                              "moves": rows,
+                              "vix_change": (vix or {}).get("change_pct")})
         if vix and vix.get("change_pct"):
             try:
                 vix_changes.append(float(str(vix["change_pct"]).replace("%", "").replace("+", "")))
@@ -366,17 +355,15 @@ def build_expectation(prec_rows):
         pcts = [e[0] for e in entries]
         n_sig = sum(1 for e in entries if e[1])
         avg = sum(pcts) / len(pcts)
-        spread = max(pcts) - min(pcts) if len(pcts) > 1 else 0
         averages.append({"sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
                          "n_events": len(entries), "n_significant": n_sig,
                          "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
-                         "spread": round(spread, 1),
+                         "spread": round(max(pcts) - min(pcts), 1) if len(pcts) > 1 else 0,
                          "direction": "gain" if avg >= 0 else "loss",
                          "consistency": f"{n_sig} of {len(entries)} were statistically significant"})
     averages.sort(key=lambda x: abs(x["avg_value"]), reverse=True)
 
-    return {"based_on": used, "sector_averages": averages,
-            "per_precedent": per_precedent,       # for the dot plot
+    return {"based_on": used, "sector_averages": averages, "per_precedent": per_precedent,
             "avg_vix_change": (f"{sum(vix_changes)/len(vix_changes):+.0f}%" if vix_changes else None),
             "avg_volatility_ratio": (round(sum(vol_ratios)/len(vol_ratios), 2) if vol_ratios else None),
             "caveat": ("These figures are what actually happened in comparable historical events, "
