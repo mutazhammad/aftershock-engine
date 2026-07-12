@@ -1,0 +1,19 @@
+name: Expand precedent library
+on:
+  schedule:
+    - cron: "0 5 * * 0"     # weekly, Sunday 05:00 UTC
+  workflow_dispatch:
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests anthropic pandas numpy yfinance
+      - run: python expand_library.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
