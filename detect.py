@@ -10,6 +10,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 AUTH = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 client = Anthropic()
 
+FAST = "claude-haiku-4-5-20251001"        # detection, research
+DEEP = "claude-sonnet-4-6"                # the Important Notes reasoning pass
+
 DISCLAIMER = "This tool informs your decision. It does not give investment advice."
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
           "trade war tariffs", "invasion war", "OPEC oil", "nuclear missile"]
@@ -50,6 +53,12 @@ TICKER_START = {"STNG": 2010, "FRO": 2001, "INSW": 2017, "XOM": 1990, "CVX": 199
     "WMT": 1990, "TGT": 1990, "CAT": 1990, "DE": 1990, "BA": 1990, "NVDA": 1999,
     "AMD": 1990, "INTC": 1990, "SPY": 1993, "TLT": 2002, "KRE": 2006, "JPM": 1990,
     "BAC": 1990}
+
+
+def ask(model, system, user, max_tokens=3000):
+    msg = client.messages.create(model=model, max_tokens=max_tokens,
+                                 system=system, messages=[{"role": "user", "content": user}])
+    return msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
 
 
 # ---------- cache ----------
@@ -94,61 +103,136 @@ def gather_articles():
 
 
 def ai_find_events(articles):
+    """Identify significant events with a DEEP analysis and named companies."""
     listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
                         for i, a in enumerate(articles[:80]))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    system = ("You are a financial-markets analyst. Identify SIGNIFICANT market-moving "
-              "geopolitical events from recent news. Ignore sports, entertainment, local "
-              "news, opinion, and speculation. Be transparent about date uncertainty.")
-    user = (f"Today is {today}.\n\nHEADLINES:\n{listing}\n\n"
-        "Return ONLY a JSON array of significant events:\n"
+    system = (
+        "You are a senior geopolitical risk analyst writing for financial-markets "
+        "professionals. Identify SIGNIFICANT market-moving events from recent news. "
+        "Ignore sports, entertainment, local news, opinion, and speculation. Write with "
+        "analytical depth: explain the mechanism by which the event transmits to markets, "
+        "not just what happened. Name the specific companies exposed and explain HOW each "
+        "is exposed. Never use em dashes or en dashes in your prose."
+    )
+    user = (
+        f"Today is {today}.\n\nHEADLINES:\n{listing}\n\n"
+        "Return ONLY a JSON array of significant events. For each:\n"
         '{"event_type":"waterway_block|pipeline_block|sanctions|sanctions_relief|bombing|'
-        'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",'
-        ' "headline":"actual headline", "event_date":"YYYY-MM-DD",'
-        ' "date_explanation":"what the article says about timing and how certain",'
-        ' "what_happened":"2-3 sentences on what is reported",'
-        ' "timing_note":"when it happened or is expected",'
-        ' "why_significant":"one line on market relevance"}  Only JSON.')
-    msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=4000,
-                                 system=system, messages=[{"role": "user", "content": user}])
-    text = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",\n'
+        ' "headline":"the actual headline",\n'
+        ' "event_date":"YYYY-MM-DD",\n'
+        ' "date_explanation":"what the reporting says about timing and how certain the date is",\n'
+        ' "what_happened":"FIVE TO EIGHT sentences. What occurred, who the actors are, the '
+        'scale and severity, what is confirmed versus reported, and the immediate operational '
+        'consequences. Be specific and substantive.",\n'
+        ' "transmission_mechanism":"THREE TO FIVE sentences explaining the causal chain from '
+        'this event to market prices. Which physical or financial channel carries the shock, '
+        'which inputs get more expensive or scarce, and which margins are squeezed or widened.",\n'
+        ' "timing_note":"when it happened, or when it is expected to happen",\n'
+        ' "why_significant":"one line on market relevance",\n'
+        ' "companies_involved":[{"ticker":"XOM","name":"ExxonMobil","role":"How this specific '
+        'company is exposed to THIS event, one or two sentences. Be concrete: which asset, '
+        'which route, which contract, which input cost.","exposure":"direct|indirect|beneficiary"}],\n'
+        ' "region":"the affected region",\n'
+        ' "location":{"center":[longitude,latitude],"zoom":5}}\n\n'
+        "companies_involved should list 4 to 8 specific listed companies. Include both those "
+        "hurt and those who benefit. Use real tickers. Only JSON."
+    )
+    text = ask(FAST, system, user, max_tokens=8000)
     try:
         return json.loads(text)
     except Exception:
-        print("  AI returned non-JSON:", text[:150]); return []
+        print("  AI returned non-JSON:", text[:150])
+        return []
 
 
 # ---------- per-event precedent research ----------
 def ai_research_precedents(event):
-    """For THIS specific breaking event, find the closest historical precedents."""
     system = (
-        "You are a financial-markets historian. Given a current event, identify the "
-        "closest HISTORICAL PRECEDENTS — past events with the same market mechanism. "
-        "ACCURACY IS PARAMOUNT. For each, give the INFORMATION DATE (the first trading "
-        "day markets could have known) and rate your confidence honestly: 'high' only if "
-        "certain of the specific day. Only propose events from 2005 onward. Do not guess."
+        "You are a financial-markets historian. Given a current event, identify the closest "
+        "HISTORICAL PRECEDENTS, meaning past events with the same market transmission "
+        "mechanism. ACCURACY IS PARAMOUNT. For each, give the INFORMATION DATE, the first "
+        "trading day markets could realistically have known, and rate your confidence "
+        "honestly. Use 'high' only if you are certain of the specific day. Only propose "
+        "events from 2005 onward. Do not guess dates."
     )
     user = (
-        f"CURRENT EVENT:\n"
-        f"Headline: {event.get('headline','')}\n"
+        f"CURRENT EVENT:\nHeadline: {event.get('headline','')}\n"
         f"Type: {event.get('event_type','')}\n"
-        f"What happened: {event.get('what_happened','')}\n\n"
+        f"What happened: {event.get('what_happened','')}\n"
+        f"Mechanism: {event.get('transmission_mechanism','')}\n\n"
         "Identify up to 5 of the closest historical precedents. Return ONLY JSON:\n"
-        '[{"id":"snake_case_id_with_year", "name":"Event name",'
-        ' "information_date":"YYYY-MM-DD", "date_confidence":"high|medium|low",'
+        '[{"id":"snake_case_id_with_year","name":"Event name",'
+        ' "information_date":"YYYY-MM-DD","date_confidence":"high|medium|low",'
         ' "date_reasoning":"why this is the information date",'
-        ' "why_relevant":"why this is a precedent for the current event",'
+        ' "why_relevant":"two to three sentences on why this is a precedent for the current '
+        'event, focusing on the shared transmission mechanism",'
         ' "region":"region"}]  Only JSON.'
     )
-    msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=2000,
-                                 system=system, messages=[{"role": "user", "content": user}])
-    text = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    text = ask(FAST, system, user, max_tokens=2500)
     try:
         return json.loads(text)
     except Exception:
         return []
 
 
+# ---------- IMPORTANT NOTES: what makes this event different ----------
+def ai_important_notes(event, prec_rows):
+    """The reasoning pass. What has changed between the precedents and now that would
+    alter the market response? Uses the stronger model."""
+    if not prec_rows:
+        return None
+
+    prec_desc = "\n".join(
+        f"- {p['id']} | {p.get('name','')} | {str(p.get('information_date',''))[:10]}\n"
+        f"    Measured: " + ", ".join(
+            f"{r['sector']} {r['pct']}" + (" (significant)" if r.get("significant") else "")
+            for r in (p.get("data") or {}).get("reaction", [])[:5])
+        for p in prec_rows)
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    system = (
+        "You are a senior markets strategist. Your job is to identify why a historical "
+        "precedent may NOT translate cleanly to a current event. This is the most important "
+        "analytical work in the report: the differences that would change the market response. "
+        "Think about structural change in the underlying market, policy and monetary regime, "
+        "changes in market structure and which firms are exposed, confounding events that "
+        "contaminated the precedent's measurement, differences in scale and severity, and "
+        "changes in regional dynamics and actors. Be specific and concrete. Cite real "
+        "structural changes, not vague generalities. Never use em dashes or en dashes."
+    )
+    user = (
+        f"Today is {today}.\n\n"
+        f"CURRENT EVENT:\n{event.get('headline','')}\n"
+        f"Type: {event.get('event_type','')}\n"
+        f"Region: {event.get('region','')}\n"
+        f"What happened: {event.get('what_happened','')}\n"
+        f"Mechanism: {event.get('transmission_mechanism','')}\n\n"
+        f"MEASURED PRECEDENTS BEING USED:\n{prec_desc}\n\n"
+        "Return ONLY JSON:\n"
+        '{"overall_applicability":"THREE TO FIVE sentences assessing how well this precedent '
+        'set applies to the current event as a whole. Be direct about where the comparison is '
+        'strong and where it breaks down.",\n'
+        ' "notes":[{"title":"Short title for the note",'
+        ' "category":"structural|regime|market_structure|confounding|scale|regional",'
+        ' "detail":"TWO TO FOUR sentences. A specific, concrete difference between the '
+        'precedent conditions and today that would change the market response. Name the '
+        'change and explain its directional effect on the expected reaction.",'
+        ' "affects":["precedent_id", ...],'
+        ' "direction":"amplifies|dampens|uncertain"}]}\n\n'
+        "Produce 3 to 6 notes. Each must be a REAL structural difference, not a generic "
+        "caveat. Only JSON."
+    )
+    text = ask(DEEP, system, user, max_tokens=3000)
+    try:
+        return json.loads(text)
+    except Exception as e:
+        print(f"    (important notes failed: {str(e)[:50]})")
+        return None
+
+
+# ---------- measurement and validation ----------
 def era_safe(basket, year):
     out = {}
     for sector, tickers in basket.items():
@@ -178,27 +262,28 @@ def has_signal(record):
         return False, "no measurable reaction"
     b = max(moves)
     return (b >= 2.0), (f"largest move {b:.1f}%" if b >= 2.0
-                        else f"largest move only {b:.1f}% — likely a non-event")
+                        else f"largest move only {b:.1f}%, likely a non-event")
 
 
 def measure_precedent(p, etype):
-    """Measure one AI-proposed precedent. Returns the stored row, or None if rejected."""
     pid = p.get("id", "").strip()
     date = p.get("information_date", "")
     conf = p.get("date_confidence", "low")
 
     if not pid or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date)):
-        return None, "bad id/date"
+        return None, "bad id or date"
     if conf != "high":
         return None, f"date confidence '{conf}'"
 
     cached = cache_get(pid)
     if cached and (cached.get("data") or {}).get("reaction"):
+        d = cached["data"]
+        d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
         return cached, "cached"
 
     ev = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if ev.year < 2005:
-        return None, f"{ev.year} — pre-2005 unreliable"
+        return None, f"{ev.year}, pre-2005 data unreliable"
     if (datetime.now(timezone.utc) - ev).days < 60:
         return None, "too recent for a full window"
 
@@ -216,7 +301,7 @@ def measure_precedent(p, etype):
                  "summary": p.get("why_relevant", ""), "key_metrics": [], "timeline": [],
                  "markers": [], "historical": [], "historical_precedents": [],
                  "companies_in_news": [], "lasting_finding": "",
-                 "confidence": f"Date: {p.get('date_reasoning','')}"}
+                 "confidence": f"Date basis: {p.get('date_reasoning','')}"}
     try:
         record, top = run(EVENT, basket, {}, NARRATIVE)
     except Exception as e:
@@ -224,7 +309,7 @@ def measure_precedent(p, etype):
 
     ok, why = plausible(record, cfg["expect"])
     if not ok:
-        return None, f"implausible — {why}"
+        return None, f"implausible, {why}"
     sig_ok, sig_why = has_signal(record)
     if not sig_ok:
         return None, sig_why
@@ -241,19 +326,30 @@ def build_expectation(prec_rows):
     if not prec_rows:
         return None
     sector_moves, vix_changes, vol_ratios, used = {}, [], [], []
+    per_precedent = []          # individual results, for the dot plot
+
     for p in prec_rows:
         d = p.get("data") or {}
         used.append({"id": p["id"], "name": p.get("name", ""),
                      "date": str(p.get("information_date", ""))[:10],
                      "why_relevant": d.get("why_relevant", "")})
+        rows = []
         for r in d.get("reaction", []):
             try:
                 pct = float(str(r["pct"]).replace("%", "").replace("+", ""))
             except Exception:
                 continue
             sector_moves.setdefault(r["sector"], []).append((pct, bool(r.get("significant"))))
+            rows.append({"sector": r["sector"], "pct": r["pct"], "value": pct,
+                         "significant": bool(r.get("significant")), "t_stat": r.get("t_stat")})
         vol = d.get("volatility") or {}
         vix = vol.get("vix")
+        per_precedent.append({
+            "id": p["id"], "name": p.get("name", ""),
+            "date": str(p.get("information_date", ""))[:10],
+            "moves": rows,
+            "vix_change": (vix or {}).get("change_pct"),
+        })
         if vix and vix.get("change_pct"):
             try:
                 vix_changes.append(float(str(vix["change_pct"]).replace("%", "").replace("+", "")))
@@ -270,31 +366,39 @@ def build_expectation(prec_rows):
         pcts = [e[0] for e in entries]
         n_sig = sum(1 for e in entries if e[1])
         avg = sum(pcts) / len(pcts)
-        averages.append({"sector": sector, "avg_move": f"{avg:+.1f}%",
+        spread = max(pcts) - min(pcts) if len(pcts) > 1 else 0
+        averages.append({"sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
                          "n_events": len(entries), "n_significant": n_sig,
+                         "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
+                         "spread": round(spread, 1),
                          "direction": "gain" if avg >= 0 else "loss",
                          "consistency": f"{n_sig} of {len(entries)} were statistically significant"})
-    averages.sort(key=lambda x: abs(float(x["avg_move"].replace("%", ""))), reverse=True)
+    averages.sort(key=lambda x: abs(x["avg_value"]), reverse=True)
 
     return {"based_on": used, "sector_averages": averages,
+            "per_precedent": per_precedent,       # for the dot plot
             "avg_vix_change": (f"{sum(vix_changes)/len(vix_changes):+.0f}%" if vix_changes else None),
             "avg_volatility_ratio": (round(sum(vol_ratios)/len(vol_ratios), 2) if vol_ratios else None),
             "caveat": ("These figures are what actually happened in comparable historical events, "
-                       "measured from market data. They are NOT a forecast. This event is too "
-                       "recent to measure.")}
+                       "measured from market data. They are not a forecast of what will happen now. "
+                       "This event is too recent to measure.")}
 
 
-def publish(cid, e, prec_rows, expectation):
+def publish(cid, e, prec_rows, expectation, notes):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     record = {
         "event": {"name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
                   "information_date": e.get("event_date", ""), "announcement_date": "",
                   "key_metrics": []},
-        "location": {}, "sources": [], "status": "confirmed", "recency": "breaking",
+        "location": e.get("location", {}),
+        "sources": [], "status": "confirmed", "recency": "breaking",
         "summary": e.get("what_happened", ""),
+        "transmission_mechanism": e.get("transmission_mechanism", ""),
         "date_explanation": e.get("date_explanation", ""),
         "timing_note": e.get("timing_note", ""),
         "why_significant": e.get("why_significant", ""),
+        "companies_involved": e.get("companies_involved", []),
+        "important_notes": notes,
         "db_date": now,
         "timeline": [], "reaction": [], "lasting_finding": "",
         "timeseries": {"days": [], "series": [], "markers": []}, "phases": [],
@@ -303,21 +407,23 @@ def publish(cid, e, prec_rows, expectation):
         "matched_precedents": [p["id"] for p in prec_rows],
         "precedent_expectation": expectation,
         "companies_affected": [], "companies_in_news": [],
-        "confidence": ("Breaking event — the market reaction has not happened yet and cannot "
-                       "be measured. The precedents below were researched for this specific "
-                       "event, measured from real market data, and validated. This analysis "
-                       "deepens automatically as data accumulates."),
+        "confidence": ("Breaking event. The market reaction has not happened yet and cannot be "
+                       "measured. The precedents below were researched for this specific event, "
+                       "measured from real market data, and validated. This analysis deepens "
+                       "automatically as market data accumulates."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
            "information_date": e.get("event_date", "") or None, "status": "confirmed",
-           "recency": "breaking", "region": ""}
+           "recency": "breaking", "region": e.get("region", "")}
     resp = requests.post(f"{SUPABASE_URL}/rest/v1/events", params={"on_conflict": "id"},
         headers={**AUTH, "Content-Type": "application/json",
                  "Prefer": "resolution=ignore-duplicates,return=minimal"},
         data=json.dumps([{**top, "data": record}]), timeout=30)
+    n_notes = len(notes.get("notes", [])) if notes else 0
     print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {cid}"
-          f" ({len(prec_rows)} validated precedents)")
+          f" ({len(prec_rows)} precedents, {len(record['companies_involved'])} companies, "
+          f"{n_notes} notes)")
 
 
 # ---------------- run ----------------
@@ -336,16 +442,18 @@ for i, e in enumerate(events):
     print(f"{cid}: {e.get('headline','')[:55]}")
 
     print("  researching precedents...")
-    proposals = ai_research_precedents(e)
     prec_rows = []
-    for p in proposals:
+    for p in ai_research_precedents(e):
         row, why = measure_precedent(p, etype)
-        tag = "OK" if row else "REJECT"
-        print(f"    {tag} {p.get('id','?')}: {why}")
+        print(f"    {'OK' if row else 'REJECT'} {p.get('id','?')}: {why}")
         if row:
             prec_rows.append(row)
 
     expectation = build_expectation(prec_rows)
-    publish(cid, e, prec_rows, expectation)
+
+    print("  analysing what makes this event different...")
+    notes = ai_important_notes(e, prec_rows)
+
+    publish(cid, e, prec_rows, expectation, notes)
 
 print("\nDetection complete.")
