@@ -12,6 +12,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install requests anthropic
+      - run: pip install requests anthropic pandas numpy yfinance
       - run: python detect.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
