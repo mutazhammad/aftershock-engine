@@ -60,6 +60,56 @@ def ask(system, user, max_tokens=3000):
     return msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
 
 
+def parse_event_array(text):
+    """Parse a JSON array of event objects. If the response was cut off mid-array
+    (hit max_tokens before the array closed), recover whatever complete top-level
+    objects came before the cutoff instead of discarding the whole batch."""
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    print("  response did not parse as complete JSON, attempting recovery")
+    recovered = []
+    depth = 0
+    start = None
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    chunk = text[start:i + 1]
+                    try:
+                        recovered.append(json.loads(chunk))
+                    except Exception:
+                        pass
+                    start = None
+
+    if recovered:
+        print(f"  recovered {len(recovered)} complete event(s) from a truncated response")
+        return recovered
+
+    print("  could not recover any events:", text[:150])
+    return []
+
+
 # ---------- cache ----------
 def cache_get(pid):
     try:
@@ -112,11 +162,13 @@ def ai_find_events(articles):
         "Ignore sports, entertainment, local news, opinion, and speculation. Write with "
         "analytical depth: explain the mechanism by which the event transmits to markets, "
         "not just what happened. Name the specific companies exposed and explain how each "
-        "is exposed. Never use em dashes or en dashes in your prose."
+        "is exposed. Never use em dashes or en dashes in your prose. Identify at most 6 "
+        "events, prioritising the most significant, so the full response fits comfortably "
+        "within the output limit."
     )
     user = (
         f"Today is {today}.\n\nHEADLINES:\n{listing}\n\n"
-        "Return ONLY a JSON array of significant events. For each:\n"
+        "Return ONLY a JSON array of up to 6 significant events. For each:\n"
         '{"event_type":"waterway_block|pipeline_block|sanctions|sanctions_relief|bombing|'
         'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",\n'
         ' "headline":"the actual headline",\n'
@@ -135,15 +187,12 @@ def ai_find_events(articles):
         'which route, which contract, which input cost.","exposure":"direct|indirect|beneficiary"}],\n'
         ' "region":"the affected region",\n'
         ' "location":{"center":[longitude,latitude],"zoom":5}}\n\n'
-        "companies_involved should list 4 to 8 specific listed companies, including both those "
-        "hurt and those who benefit. Use real tickers. Only JSON."
+        "companies_involved should list 4 to 6 specific listed companies, including both those "
+        "hurt and those who benefit. Use real tickers. Only JSON, and make sure the array is "
+        "fully closed."
     )
-    text = ask(system, user, max_tokens=8000)
-    try:
-        return json.loads(text)
-    except Exception:
-        print("  AI returned non-JSON:", text[:150])
-        return []
+    text = ask(system, user, max_tokens=16000)
+    return parse_event_array(text)
 
 
 # ---------- per-event precedent research ----------
