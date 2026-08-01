@@ -61,9 +61,9 @@ def ask(system, user, max_tokens=3000):
 
 
 def parse_event_array(text):
-    """Parse a JSON array of event objects. If the response was cut off mid-array
-    (hit max_tokens before the array closed), recover whatever complete top-level
-    objects came before the cutoff instead of discarding the whole batch."""
+    """Parse a JSON array of event objects. If the response was cut off mid-array,
+    recover whatever complete top-level objects came before the cutoff instead of
+    discarding the whole batch."""
     try:
         return json.loads(text)
     except Exception:
@@ -203,7 +203,9 @@ def ai_research_precedents(event):
         "mechanism. ACCURACY IS PARAMOUNT. For each, give the INFORMATION DATE, the first "
         "trading day markets could realistically have known, and rate your confidence "
         "honestly. Use 'high' only if you are certain of the specific day. Only propose "
-        "events from 2005 onward. Do not guess dates."
+        "events from 2005 onward. Do not guess dates. Match the event's actual mechanism, "
+        "not just its surface category. A policy action and a physical blockade are not "
+        "interchangeable precedents even if both involve the same region."
     )
     user = (
         f"CURRENT EVENT:\nHeadline: {event.get('headline','')}\n"
@@ -225,9 +227,10 @@ def ai_research_precedents(event):
         return []
 
 
-# ---------- IMPORTANT NOTES ----------
+# ---------- IMPORTANT NOTES, consolidated ----------
 def ai_important_notes(event, prec_rows):
-    """What differs between the precedents and today that would change the market response."""
+    """What differs between the precedents and today. Consolidated: at most 3 notes,
+    a verdict up front, no restating the same argument multiple ways."""
     if not prec_rows:
         return None
 
@@ -237,12 +240,15 @@ def ai_important_notes(event, prec_rows):
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system = (
-        "You are a markets strategist. Identify why a historical precedent may not translate "
-        "cleanly to a current event. Focus on concrete differences: structural change in the "
-        "underlying market, policy or monetary regime, which firms are exposed now versus then, "
-        "confounding events that contaminated the precedent, differences in scale and severity, "
-        "and changes in regional actors and dynamics. Be specific. Cite real changes, not vague "
-        "generalities. Never use em dashes or en dashes."
+        "You are a markets strategist. Identify why a historical precedent may not "
+        "translate cleanly to a current event. Before writing anything, identify the "
+        "genuinely DISTINCT arguments, not the number of facts you could cite. If several "
+        "facts support the same underlying reason, for example structural capacity moving "
+        "away from a single region, that is ONE note with several supporting details, not "
+        "several notes. Write at most 3 notes. If there is truly only one real reason the "
+        "precedents apply or fail to apply, write one note and stop. Padding with restated "
+        "arguments is worse than a short section. Be specific and concrete. Never use em "
+        "dashes or en dashes."
     )
     user = (
         f"Today is {today}.\n\n"
@@ -252,19 +258,20 @@ def ai_important_notes(event, prec_rows):
         f"What happened: {event.get('what_happened','')}\n\n"
         f"PRECEDENTS BEING USED:\n{prec_desc}\n\n"
         "Return ONLY JSON:\n"
-        '{"overall_applicability":"THREE TO FIVE sentences on how well this precedent set '
-        'applies to the current event. Be direct about where the comparison is strong and '
-        'where it breaks down.",\n'
+        '{"verdict":"ONE SENTENCE stating plainly whether this precedent set is a strong, '
+        'moderate, or weak basis for comparison, and why in the fewest words possible.",\n'
+        ' "overall_applicability":"TWO TO THREE sentences, no more. State where the '
+        'comparison holds and where it breaks down.",\n'
         ' "notes":[{"title":"Short title",'
         ' "category":"structural|regime|market_structure|confounding|scale|regional",'
-        ' "detail":"TWO TO FOUR sentences. A specific difference between the precedent '
-        'conditions and today that would change the market response. Name the change and its '
-        'directional effect.",'
+        ' "detail":"TWO TO THREE sentences. State the change and its directional effect. '
+        'If this note would restate a point already made in another note, do not include '
+        'it, fold the detail into the existing note instead.",'
         ' "affects":["precedent_id", ...],'
         ' "direction":"amplifies|dampens|uncertain"}]}\n\n'
-        "Produce 3 to 5 notes. Each must be a real difference, not a generic caveat. Only JSON."
+        "Maximum 3 notes. Fewer is better if fewer are genuinely distinct. Only JSON."
     )
-    text = ask(system, user, max_tokens=2500)
+    text = ask(system, user, max_tokens=1800)
     try:
         return json.loads(text)
     except Exception as e:
@@ -283,26 +290,36 @@ def era_safe(basket, year):
 
 
 def plausible(record, expect):
-    moves = {r["sector"]: r["tone"] for r in record.get("reaction", [])}
+    """A directional expectation must be met by a SIGNIFICANT sector, not any sector
+    regardless of significance. Raises the bar from 'moved the right way' to 'moved
+    the right way and the move was real'."""
+    sig_moves = {r["sector"]: r["tone"] for r in record.get("reaction", [])
+                if r.get("significant")}
     if not expect:
         return True, "no directional expectation"
     m = sum(1 for s, d in expect.items()
-            if moves.get(s) == ("gain" if d == "up" else "loss"))
-    return m >= 1, f"{m}/{len(expect)} expected moves matched"
+            if sig_moves.get(s) == ("gain" if d == "up" else "loss"))
+    return m >= 1, f"{m}/{len(expect)} expected moves matched with significance"
 
 
 def has_signal(record):
+    """At least one sector must be statistically significant, not just large. A big
+    but noisy move is not evidence."""
     moves = []
+    sig_count = 0
     for r in record.get("reaction", []):
         try:
-            moves.append(abs(float(str(r["pct"]).replace("%", "").replace("+", ""))))
+            pct = abs(float(str(r["pct"]).replace("%", "").replace("+", "")))
         except Exception:
-            pass
+            continue
+        moves.append(pct)
+        if r.get("significant"):
+            sig_count += 1
     if not moves:
         return False, "no measurable reaction"
-    b = max(moves)
-    return (b >= 2.0), (f"largest move {b:.1f}%" if b >= 2.0
-                        else f"largest move only {b:.1f}%, likely a non-event")
+    if sig_count == 0:
+        return False, f"largest move {max(moves):.1f}% but nothing statistically significant"
+    return True, f"largest move {max(moves):.1f}%, {sig_count} sector(s) significant"
 
 
 def measure_precedent(p, etype):
@@ -317,9 +334,18 @@ def measure_precedent(p, etype):
 
     cached = cache_get(pid)
     if cached and (cached.get("data") or {}).get("reaction"):
-        cached["data"]["why_relevant"] = p.get("why_relevant",
-                                               cached["data"].get("why_relevant", ""))
-        return cached, "cached"
+        d = cached["data"]
+        # cached precedents measured under the OLD looser gate may not meet the new bar,
+        # so re-validate them against the current standard before reusing
+        cfg = TYPE_CONFIG.get(etype, {"basket": ENERGY, "expect": {}})
+        sig_ok, sig_why = has_signal(d)
+        if not sig_ok:
+            return None, f"cached but fails current bar, {sig_why}"
+        ok, why = plausible(d, cfg["expect"])
+        if not ok:
+            return None, f"cached but fails current bar, implausible, {why}"
+        d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
+        return cached, "cached, re-validated"
 
     ev = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if ev.year < 2005:
@@ -347,12 +373,12 @@ def measure_precedent(p, etype):
     except Exception as e:
         return None, f"measurement failed ({str(e)[:40]})"
 
-    ok, why = plausible(record, cfg["expect"])
-    if not ok:
-        return None, f"implausible, {why}"
     sig_ok, sig_why = has_signal(record)
     if not sig_ok:
         return None, sig_why
+    ok, why = plausible(record, cfg["expect"])
+    if not ok:
+        return None, f"implausible, {why}"
 
     record["why_relevant"] = p.get("why_relevant", "")
     record["date_reasoning"] = p.get("date_reasoning", "")
@@ -404,7 +430,10 @@ def build_expectation(prec_rows):
         pcts = [e[0] for e in entries]
         n_sig = sum(1 for e in entries if e[1])
         avg = sum(pcts) / len(pcts)
+        sig_pcts = [e[0] for e in entries if e[1]]
+        avg_sig = (sum(sig_pcts) / len(sig_pcts)) if sig_pcts else None
         averages.append({"sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
+                         "avg_move_significant_only": (f"{avg_sig:+.1f}%" if avg_sig is not None else None),
                          "n_events": len(entries), "n_significant": n_sig,
                          "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
                          "spread": round(max(pcts) - min(pcts), 1) if len(pcts) > 1 else 0,
@@ -445,8 +474,9 @@ def publish(cid, e, prec_rows, expectation, notes):
         "companies_affected": [], "companies_in_news": [],
         "confidence": ("Breaking event. The market reaction has not happened yet and cannot be "
                        "measured. The precedents below were researched for this specific event, "
-                       "measured from real market data, and validated. This analysis deepens "
-                       "automatically as market data accumulates."),
+                       "measured from real market data, and validated against a strict "
+                       "statistical significance bar. This analysis deepens automatically as "
+                       "market data accumulates."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -457,9 +487,12 @@ def publish(cid, e, prec_rows, expectation, notes):
                  "Prefer": "resolution=ignore-duplicates,return=minimal"},
         data=json.dumps([{**top, "data": record}]), timeout=30)
     n_notes = len(notes.get("notes", [])) if notes else 0
+    verdict = (notes or {}).get("verdict", "") if notes else ""
     print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {cid}"
           f" ({len(prec_rows)} precedents, {len(record['companies_involved'])} companies, "
           f"{n_notes} notes)")
+    if verdict:
+        print(f"    verdict: {verdict}")
 
 
 # ---------------- run ----------------
