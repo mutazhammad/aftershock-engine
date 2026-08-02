@@ -2,8 +2,8 @@
 
 Aftershock measures how geopolitical events move financial markets. It detects significant events from live news, researches historical precedents for each one, measures those precedents with a real event-study engine, and rejects any measurement that fails statistical validation before it reaches the site. The system runs unattended on a schedule.
 
-**Live site:** [add your Vercel URL here]
-**Frontend repo:** [add your aftershock_site link here]
+**Live site:** https://aftershock-site-five.vercel.app/
+**Frontend repo:** https://github.com/mutazhammad/aftershock_site
 
 This repo is the backend: the event-study engine, the detection and precedent-research pipeline, and the scheduled jobs that keep the database current.
 
