@@ -10,7 +10,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 AUTH = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 client = Anthropic()
 
-MODEL = "claude-haiku-4-5-20251001"      # everything runs on Haiku
+MODEL = "claude-haiku-4-5-20251001"
 
 DISCLAIMER = "This tool informs your decision. It does not give investment advice."
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
@@ -61,20 +61,15 @@ def ask(system, user, max_tokens=3000):
 
 
 def parse_event_array(text):
-    """Parse a JSON array of event objects. If the response was cut off mid-array,
-    recover whatever complete top-level objects came before the cutoff instead of
-    discarding the whole batch."""
+    """Parse a JSON array. If the response was cut off mid-array, recover the complete
+    objects that came before the cutoff rather than discarding the whole batch."""
     try:
         return json.loads(text)
     except Exception:
         pass
-
     print("  response did not parse as complete JSON, attempting recovery")
-    recovered = []
-    depth = 0
-    start = None
-    in_string = False
-    escape = False
+    recovered, depth, start = [], 0, None
+    in_string = escape = False
     for i, ch in enumerate(text):
         if in_string:
             if escape:
@@ -95,17 +90,14 @@ def parse_event_array(text):
             if depth > 0:
                 depth -= 1
                 if depth == 0 and start is not None:
-                    chunk = text[start:i + 1]
                     try:
-                        recovered.append(json.loads(chunk))
+                        recovered.append(json.loads(text[start:i + 1]))
                     except Exception:
                         pass
                     start = None
-
     if recovered:
         print(f"  recovered {len(recovered)} complete event(s) from a truncated response")
         return recovered
-
     print("  could not recover any events:", text[:150])
     return []
 
@@ -144,7 +136,8 @@ def gather_articles():
                     t = (a.get("title") or "").strip()
                     if t and t not in seen:
                         seen.add(t)
-                        pool.append({"title": t, "description": (a.get("description") or "")[:250]})
+                        pool.append({"title": t,
+                                     "description": (a.get("description") or "")[:250]})
         except Exception as e:
             print(f"  gather failed for {topic}: {str(e)[:40]}")
         time.sleep(1)
@@ -152,134 +145,86 @@ def gather_articles():
 
 
 def ai_find_events(articles):
-    """Identify significant events with deep analysis and named companies."""
+    """Identify significant events. No fixed quotas: length and company count follow
+    what the evidence actually supports."""
     listing = "\n".join(f"{i}. {a['title']} — {a['description']}"
                         for i, a in enumerate(articles[:80]))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     system = (
         "You are a senior geopolitical risk analyst writing for financial-markets "
-        "professionals. Identify SIGNIFICANT market-moving events from recent news. "
-        "Ignore sports, entertainment, local news, opinion, and speculation. Write with "
-        "analytical depth: explain the mechanism by which the event transmits to markets, "
-        "not just what happened. Name the specific companies exposed and explain how each "
-        "is exposed. Never use em dashes or en dashes in your prose. Identify at most 6 "
-        "events, prioritising the most significant, so the full response fits comfortably "
-        "within the output limit."
+        "professionals who already read the news. Identify SIGNIFICANT market-moving "
+        "events. Ignore sports, entertainment, local news, opinion, and speculation. "
+        "Write only as much as the evidence supports. Do not pad a simple event or a "
+        "simple mechanism to sound thorough. A tight three sentence explanation of a "
+        "straightforward causal chain is better than five sentences restating it. "
+        "Never use em dashes or en dashes."
     )
     user = (
         f"Today is {today}.\n\nHEADLINES:\n{listing}\n\n"
-        "Return ONLY a JSON array of up to 6 significant events. For each:\n"
+        "Return ONLY a JSON array of up to 6 significant events, fewer if fewer qualify. "
+        "For each:\n"
         '{"event_type":"waterway_block|pipeline_block|sanctions|sanctions_relief|bombing|'
         'invasion|trade_deal|tariffs|opec_supply|nuclear|coup_unrest|cyberattack|financial_crisis",\n'
         ' "headline":"the actual headline",\n'
         ' "event_date":"YYYY-MM-DD",\n'
-        ' "date_explanation":"what the reporting says about timing and how certain the date is",\n'
-        ' "what_happened":"FIVE TO EIGHT sentences. What occurred, who the actors are, the '
-        'scale and severity, what is confirmed versus reported, and the immediate operational '
-        'consequences. Be specific and substantive.",\n'
-        ' "transmission_mechanism":"THREE TO FIVE sentences explaining the causal chain from '
-        'this event to market prices. Which physical or financial channel carries the shock, '
-        'which inputs get scarcer or more expensive, and which margins are squeezed or widened.",\n'
-        ' "timing_note":"when it happened, or when it is expected to happen",\n'
+        ' "date_explanation":"what the reporting says about timing, and whether the event '
+        'was anticipated before this date. State plainly if the market may already have '
+        'priced it in.",\n'
+        ' "what_happened":"What occurred, who the actors are, the scale, and what is '
+        'confirmed versus reported. As many sentences as this genuinely requires and no '
+        'more. Three tight sentences beat eight padded ones.",\n'
+        ' "transmission_mechanism":"The causal chain from this event to market prices. One '
+        'sentence per genuine causal step, no more. If the chain is short, say so briefly '
+        'rather than elaborating.",\n'
+        ' "timing_note":"when it happened, or when it is expected",\n'
         ' "why_significant":"one line on market relevance",\n'
-        ' "companies_involved":[{"ticker":"XOM","name":"ExxonMobil","role":"How this specific '
-        'company is exposed to THIS event, one or two sentences. Be concrete: which asset, '
-        'which route, which contract, which input cost.","exposure":"direct|indirect|beneficiary"}],\n'
+        ' "companies_involved":[{"ticker":"XOM","name":"ExxonMobil","role":"How this company '
+        'is specifically exposed to THIS event. Name the asset, route, contract, or input '
+        'cost.","exposure":"direct|indirect|beneficiary"}],\n'
         ' "region":"the affected region",\n'
         ' "location":{"center":[longitude,latitude],"zoom":5}}\n\n'
-        "companies_involved should list 4 to 6 specific listed companies, including both those "
-        "hurt and those who benefit. Use real tickers. Only JSON, and make sure the array is "
-        "fully closed."
+        "companies_involved: include a company only if its exposure is specific and "
+        "material. Three sharp entries are better than six padded ones. Maximum six. "
+        "Use real tickers. Only JSON, fully closed array."
     )
-    text = ask(system, user, max_tokens=16000)
-    return parse_event_array(text)
+    return parse_event_array(ask(system, user, max_tokens=16000))
 
 
-# ---------- per-event precedent research ----------
+# ---------- precedent research ----------
 def ai_research_precedents(event):
     system = (
-        "You are a financial-markets historian. Given a current event, identify the closest "
-        "HISTORICAL PRECEDENTS, meaning past events with the same market transmission "
-        "mechanism. ACCURACY IS PARAMOUNT. For each, give the INFORMATION DATE, the first "
-        "trading day markets could realistically have known, and rate your confidence "
-        "honestly. Use 'high' only if you are certain of the specific day. Only propose "
-        "events from 2005 onward. Do not guess dates. Match the event's actual mechanism, "
-        "not just its surface category. A policy action and a physical blockade are not "
-        "interchangeable precedents even if both involve the same region."
+        "You are a financial-markets historian. Identify HISTORICAL PRECEDENTS for a "
+        "current event, meaning past events with the same market transmission mechanism. "
+        "ACCURACY IS PARAMOUNT. Propose an event only if it is a genuine mechanism match. "
+        "A policy action and a physical blockade are not interchangeable even in the same "
+        "region. Two strong precedents are worth more than five loose ones, so propose "
+        "fewer rather than padding the list. For each, give the INFORMATION DATE, the "
+        "first trading day markets could realistically have known, and rate confidence "
+        "honestly. Use 'high' only if certain of the specific day. Only events from 2005 "
+        "onward. Do not guess dates."
     )
     user = (
         f"CURRENT EVENT:\nHeadline: {event.get('headline','')}\n"
         f"Type: {event.get('event_type','')}\n"
         f"What happened: {event.get('what_happened','')}\n"
         f"Mechanism: {event.get('transmission_mechanism','')}\n\n"
-        "Identify up to 5 of the closest historical precedents. Return ONLY JSON:\n"
+        "Return ONLY JSON, up to 5 precedents, fewer if fewer genuinely match:\n"
         '[{"id":"snake_case_id_with_year","name":"Event name",'
         ' "information_date":"YYYY-MM-DD","date_confidence":"high|medium|low",'
         ' "date_reasoning":"why this is the information date",'
-        ' "why_relevant":"two to three sentences on why this is a precedent for the current '
-        'event, focusing on the shared transmission mechanism",'
+        ' "anticipated":"was this event anticipated before the information date, and did '
+        'markets likely price it in early. One sentence.",'
+        ' "why_relevant":"why this is a precedent, focused on the shared transmission '
+        'mechanism. Two sentences maximum.",'
         ' "region":"region"}]  Only JSON.'
     )
-    text = ask(system, user, max_tokens=2500)
     try:
-        return json.loads(text)
+        return json.loads(ask(system, user, max_tokens=2500))
     except Exception:
         return []
 
 
-# ---------- IMPORTANT NOTES, consolidated ----------
-def ai_important_notes(event, prec_rows):
-    """What differs between the precedents and today. Consolidated: at most 3 notes,
-    a verdict up front, no restating the same argument multiple ways."""
-    if not prec_rows:
-        return None
-
-    prec_desc = "\n".join(
-        f"- {p['id']} | {p.get('name','')} | {str(p.get('information_date',''))[:10]}"
-        for p in prec_rows)
-
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    system = (
-        "You are a markets strategist. Identify why a historical precedent may not "
-        "translate cleanly to a current event. Before writing anything, identify the "
-        "genuinely DISTINCT arguments, not the number of facts you could cite. If several "
-        "facts support the same underlying reason, for example structural capacity moving "
-        "away from a single region, that is ONE note with several supporting details, not "
-        "several notes. Write at most 3 notes. If there is truly only one real reason the "
-        "precedents apply or fail to apply, write one note and stop. Padding with restated "
-        "arguments is worse than a short section. Be specific and concrete. Never use em "
-        "dashes or en dashes."
-    )
-    user = (
-        f"Today is {today}.\n\n"
-        f"CURRENT EVENT:\n{event.get('headline','')}\n"
-        f"Type: {event.get('event_type','')}\n"
-        f"Region: {event.get('region','')}\n"
-        f"What happened: {event.get('what_happened','')}\n\n"
-        f"PRECEDENTS BEING USED:\n{prec_desc}\n\n"
-        "Return ONLY JSON:\n"
-        '{"verdict":"ONE SENTENCE stating plainly whether this precedent set is a strong, '
-        'moderate, or weak basis for comparison, and why in the fewest words possible.",\n'
-        ' "overall_applicability":"TWO TO THREE sentences, no more. State where the '
-        'comparison holds and where it breaks down.",\n'
-        ' "notes":[{"title":"Short title",'
-        ' "category":"structural|regime|market_structure|confounding|scale|regional",'
-        ' "detail":"TWO TO THREE sentences. State the change and its directional effect. '
-        'If this note would restate a point already made in another note, do not include '
-        'it, fold the detail into the existing note instead.",'
-        ' "affects":["precedent_id", ...],'
-        ' "direction":"amplifies|dampens|uncertain"}]}\n\n'
-        "Maximum 3 notes. Fewer is better if fewer are genuinely distinct. Only JSON."
-    )
-    text = ask(system, user, max_tokens=1800)
-    try:
-        return json.loads(text)
-    except Exception as e:
-        print(f"    (important notes failed: {str(e)[:50]})")
-        return None
-
-
-# ---------- measurement and validation ----------
+# ---------- validation ----------
 def era_safe(basket, year):
     out = {}
     for sector, tickers in basket.items():
@@ -290,11 +235,9 @@ def era_safe(basket, year):
 
 
 def plausible(record, expect):
-    """A directional expectation must be met by a SIGNIFICANT sector, not any sector
-    regardless of significance. Raises the bar from 'moved the right way' to 'moved
-    the right way and the move was real'."""
+    """A directional expectation must be met by a SIGNIFICANT sector, not any sector."""
     sig_moves = {r["sector"]: r["tone"] for r in record.get("reaction", [])
-                if r.get("significant")}
+                 if r.get("significant")}
     if not expect:
         return True, "no directional expectation"
     m = sum(1 for s, d in expect.items()
@@ -303,16 +246,14 @@ def plausible(record, expect):
 
 
 def has_signal(record):
-    """At least one sector must be statistically significant, not just large. A big
-    but noisy move is not evidence."""
-    moves = []
-    sig_count = 0
+    """At least one sector must be statistically significant. A large but noisy move
+    is not evidence."""
+    moves, sig_count = [], 0
     for r in record.get("reaction", []):
         try:
-            pct = abs(float(str(r["pct"]).replace("%", "").replace("+", "")))
+            moves.append(abs(float(str(r["pct"]).replace("%", "").replace("+", ""))))
         except Exception:
             continue
-        moves.append(pct)
         if r.get("significant"):
             sig_count += 1
     if not moves:
@@ -335,8 +276,6 @@ def measure_precedent(p, etype):
     cached = cache_get(pid)
     if cached and (cached.get("data") or {}).get("reaction"):
         d = cached["data"]
-        # cached precedents measured under the OLD looser gate may not meet the new bar,
-        # so re-validate them against the current standard before reusing
         cfg = TYPE_CONFIG.get(etype, {"basket": ENERGY, "expect": {}})
         sig_ok, sig_why = has_signal(d)
         if not sig_ok:
@@ -345,6 +284,7 @@ def measure_precedent(p, etype):
         if not ok:
             return None, f"cached but fails current bar, implausible, {why}"
         d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
+        d["anticipated"] = p.get("anticipated", d.get("anticipated", ""))
         return cached, "cached, re-validated"
 
     ev = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -382,17 +322,179 @@ def measure_precedent(p, etype):
 
     record["why_relevant"] = p.get("why_relevant", "")
     record["date_reasoning"] = p.get("date_reasoning", "")
+    record["anticipated"] = p.get("anticipated", "")
     record["validation"] = {"plausibility": why, "signal": sig_why, "date_confidence": conf}
     cache_put(record, dict(top))
     return {"id": pid, "name": p.get("name", ""), "information_date": date,
             "data": record}, f"measured ({why})"
 
 
+# ---------- DIAGNOSTICS ----------
+def concentration_check(prec_rows):
+    """A sector result driven by one constituent is weaker evidence than a basket-wide
+    move. Flags any significant sector where a single ticker dominates the reaction."""
+    flags = []
+    for p in prec_rows:
+        d = p.get("data") or {}
+        sig_sectors = {r["sector"] for r in d.get("reaction", []) if r.get("significant")}
+        by_sector = {}
+        for c in d.get("companies_affected", []):
+            if c.get("sector") not in sig_sectors:
+                continue
+            try:
+                mv = abs(float(str(c.get("move_pct", "0")).replace("%", "").replace("+", "")))
+            except Exception:
+                continue
+            by_sector.setdefault(c["sector"], []).append((c.get("ticker", "?"), mv))
+        for sector, entries in by_sector.items():
+            if len(entries) < 3:
+                continue
+            total = sum(m for _, m in entries)
+            if total <= 0:
+                continue
+            ticker, largest = max(entries, key=lambda x: x[1])
+            share = largest / total
+            if share >= 0.6:
+                flags.append({
+                    "precedent": p.get("name", p["id"]),
+                    "sector": sector,
+                    "ticker": ticker,
+                    "share": f"{share*100:.0f}%",
+                    "detail": (f"In {p.get('name', p['id'])}, the {sector} reaction was "
+                               f"largely one name: {ticker} accounted for {share*100:.0f}% "
+                               f"of the basket's total movement. Read that sector's figure "
+                               f"as a single-company result rather than a sector-wide one."),
+                })
+    return flags
+
+
+def anticipation_check(prec_rows):
+    """The causal reading of an abnormal return requires the event to have been
+    unanticipated. Surfaces what the research pass said about each precedent."""
+    out = []
+    for p in prec_rows:
+        d = p.get("data") or {}
+        note = (d.get("anticipated") or "").strip()
+        if note:
+            out.append({"precedent": p.get("name", p["id"]), "detail": note})
+    return out
+
+
+def ai_confounding_check(event, prec_rows):
+    """Was anything else moving markets in each precedent's window? A contaminated
+    window means the measured reaction cannot be attributed to the event alone."""
+    if not prec_rows:
+        return []
+    listing = "\n".join(
+        f"- {p['id']} | {p.get('name','')} | window centred on "
+        f"{str(p.get('information_date',''))[:10]}"
+        for p in prec_rows)
+    system = (
+        "You identify confounding events. Given a historical event and its measurement "
+        "window of roughly five days before to thirty days after, state whether any OTHER "
+        "major market-moving development occurred in that window that would contaminate "
+        "the measurement. Be specific and factual. If the window was clean, say so "
+        "plainly. Do not speculate. Never use em dashes or en dashes."
+    )
+    user = (
+        f"PRECEDENT WINDOWS TO CHECK:\n{listing}\n\n"
+        "Return ONLY JSON, one entry per precedent:\n"
+        '[{"precedent_id":"the id","clean":true or false,'
+        ' "detail":"If not clean, name the confounding development in one sentence. If '
+        'clean, state briefly that no major concurrent development was identified."}]  '
+        "Only JSON."
+    )
+    try:
+        return json.loads(ask(system, user, max_tokens=1500))
+    except Exception:
+        return []
+
+
+def build_diagnostics(event, prec_rows):
+    """The trust layer. Answers whether these measurements can be read causally,
+    before any interpretation is offered."""
+    if not prec_rows:
+        return None
+    concentration = concentration_check(prec_rows)
+    anticipation = anticipation_check(prec_rows)
+    confounding = ai_confounding_check(event, prec_rows)
+
+    contaminated = [c for c in confounding if not c.get("clean", True)]
+    n = len(prec_rows)
+    parts = [f"{n} precedent{'s' if n != 1 else ''} cleared validation"]
+    if concentration:
+        parts.append(f"{len(concentration)} sector result{'s' if len(concentration) != 1 else ''} "
+                     f"driven by a single constituent")
+    if contaminated:
+        parts.append(f"{len(contaminated)} measurement window{'s' if len(contaminated) != 1 else ''} "
+                     f"contained a confounding development")
+    summary = ". ".join(parts) + "."
+
+    return {
+        "summary": summary,
+        "date_basis": ("Every precedent used here was dated with high confidence and "
+                       "anchored to the information date, the first trading day markets "
+                       "could plausibly have known."),
+        "concentration": concentration,
+        "anticipation": anticipation,
+        "confounding": confounding,
+    }
+
+
+# ---------- IMPORTANT NOTES, narrowed ----------
+def ai_important_notes(event, prec_rows, diagnostics):
+    """Interpretation only. The diagnostics layer already handles whether the
+    measurements are trustworthy, so this answers only what the comparison supports."""
+    if not prec_rows:
+        return None
+    prec_desc = "\n".join(
+        f"- {p['id']} | {p.get('name','')} | {str(p.get('information_date',''))[:10]}"
+        for p in prec_rows)
+    diag_summary = (diagnostics or {}).get("summary", "")
+
+    system = (
+        "You are a markets strategist. The measurement quality of these precedents has "
+        "already been assessed separately, so do NOT discuss data reliability, sample "
+        "size, or statistical caveats. Your only job is substantive: what has materially "
+        "changed between the precedent conditions and today that would alter the market "
+        "response. Before writing, identify the genuinely DISTINCT arguments. If several "
+        "facts support the same underlying reason, that is ONE note with several details, "
+        "not several notes. Write at most 3 notes, and one is fine if there is only one "
+        "real reason. Padding with restated arguments is worse than a short section. "
+        "Never use em dashes or en dashes."
+    )
+    user = (
+        f"CURRENT EVENT:\n{event.get('headline','')}\n"
+        f"Type: {event.get('event_type','')}\n"
+        f"Region: {event.get('region','')}\n"
+        f"What happened: {event.get('what_happened','')}\n\n"
+        f"PRECEDENTS USED:\n{prec_desc}\n\n"
+        f"MEASUREMENT DIAGNOSTICS ALREADY ESTABLISHED: {diag_summary}\n\n"
+        "Return ONLY JSON:\n"
+        '{"verdict":"ONE SENTENCE stating whether this precedent set is a strong, '
+        'moderate, or weak basis for comparison, and why, in the fewest words possible.",\n'
+        ' "overall_applicability":"Two to three sentences on where the comparison holds '
+        'and where it breaks down. No more.",\n'
+        ' "notes":[{"title":"Short title",'
+        ' "category":"structural|regime|market_structure|scale|regional",'
+        ' "detail":"Two to three sentences. The change and its directional effect. If this '
+        'would restate another note, fold it in rather than adding it.",'
+        ' "affects":["precedent_id", ...],'
+        ' "direction":"amplifies|dampens|uncertain"}]}\n\n'
+        "Maximum 3 notes, fewer if fewer are distinct. Only JSON."
+    )
+    try:
+        return json.loads(ask(system, user, max_tokens=1800))
+    except Exception as e:
+        print(f"    (important notes failed: {str(e)[:50]})")
+        return None
+
+
+# ---------- expectation ----------
 def build_expectation(prec_rows):
     if not prec_rows:
         return None
-    sector_moves, vix_changes, vol_ratios, used = {}, [], [], []
-    per_precedent = []
+    sector_moves, vix_changes, vol_ratios, used, per_precedent = {}, [], [], [], []
 
     for p in prec_rows:
         d = p.get("data") or {}
@@ -412,8 +514,7 @@ def build_expectation(prec_rows):
         vix = vol.get("vix")
         per_precedent.append({"id": p["id"], "name": p.get("name", ""),
                               "date": str(p.get("information_date", ""))[:10],
-                              "moves": rows,
-                              "vix_change": (vix or {}).get("change_pct")})
+                              "moves": rows, "vix_change": (vix or {}).get("change_pct")})
         if vix and vix.get("change_pct"):
             try:
                 vix_changes.append(float(str(vix["change_pct"]).replace("%", "").replace("+", "")))
@@ -432,24 +533,25 @@ def build_expectation(prec_rows):
         avg = sum(pcts) / len(pcts)
         sig_pcts = [e[0] for e in entries if e[1]]
         avg_sig = (sum(sig_pcts) / len(sig_pcts)) if sig_pcts else None
-        averages.append({"sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
-                         "avg_move_significant_only": (f"{avg_sig:+.1f}%" if avg_sig is not None else None),
-                         "n_events": len(entries), "n_significant": n_sig,
-                         "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
-                         "spread": round(max(pcts) - min(pcts), 1) if len(pcts) > 1 else 0,
-                         "direction": "gain" if avg >= 0 else "loss",
-                         "consistency": f"{n_sig} of {len(entries)} were statistically significant"})
+        averages.append({
+            "sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
+            "avg_move_significant_only": (f"{avg_sig:+.1f}%" if avg_sig is not None else None),
+            "n_events": len(entries), "n_significant": n_sig,
+            "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
+            "spread": round(max(pcts) - min(pcts), 1) if len(pcts) > 1 else 0,
+            "direction": "gain" if avg >= 0 else "loss",
+            "consistency": f"{n_sig} of {len(entries)} were statistically significant"})
     averages.sort(key=lambda x: abs(x["avg_value"]), reverse=True)
 
     return {"based_on": used, "sector_averages": averages, "per_precedent": per_precedent,
             "avg_vix_change": (f"{sum(vix_changes)/len(vix_changes):+.0f}%" if vix_changes else None),
             "avg_volatility_ratio": (round(sum(vol_ratios)/len(vol_ratios), 2) if vol_ratios else None),
-            "caveat": ("These figures are what actually happened in comparable historical events, "
-                       "measured from market data. They are not a forecast of what will happen now. "
-                       "This event is too recent to measure.")}
+            "caveat": ("These figures are what actually happened in comparable historical "
+                       "events, measured from market data. They are not a forecast. This "
+                       "event is too recent to measure.")}
 
 
-def publish(cid, e, prec_rows, expectation, notes):
+def publish(cid, e, prec_rows, expectation, diagnostics, notes):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     record = {
         "event": {"name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -463,6 +565,7 @@ def publish(cid, e, prec_rows, expectation, notes):
         "timing_note": e.get("timing_note", ""),
         "why_significant": e.get("why_significant", ""),
         "companies_involved": e.get("companies_involved", []),
+        "diagnostics": diagnostics,
         "important_notes": notes,
         "db_date": now,
         "timeline": [], "reaction": [], "lasting_finding": "",
@@ -472,11 +575,10 @@ def publish(cid, e, prec_rows, expectation, notes):
         "matched_precedents": [p["id"] for p in prec_rows],
         "precedent_expectation": expectation,
         "companies_affected": [], "companies_in_news": [],
-        "confidence": ("Breaking event. The market reaction has not happened yet and cannot be "
-                       "measured. The precedents below were researched for this specific event, "
-                       "measured from real market data, and validated against a strict "
-                       "statistical significance bar. This analysis deepens automatically as "
-                       "market data accumulates."),
+        "confidence": ("Breaking event. The market reaction has not happened yet and cannot "
+                       "be measured. The precedents below were researched for this event, "
+                       "measured from real market data, and validated against a statistical "
+                       "significance bar. This analysis deepens as market data accumulates."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -487,12 +589,12 @@ def publish(cid, e, prec_rows, expectation, notes):
                  "Prefer": "resolution=ignore-duplicates,return=minimal"},
         data=json.dumps([{**top, "data": record}]), timeout=30)
     n_notes = len(notes.get("notes", [])) if notes else 0
-    verdict = (notes or {}).get("verdict", "") if notes else ""
+    n_flags = len((diagnostics or {}).get("concentration", []))
     print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {cid}"
           f" ({len(prec_rows)} precedents, {len(record['companies_involved'])} companies, "
-          f"{n_notes} notes)")
-    if verdict:
-        print(f"    verdict: {verdict}")
+          f"{n_flags} concentration flag(s), {n_notes} note(s))")
+    if notes and notes.get("verdict"):
+        print(f"    verdict: {notes['verdict']}")
 
 
 # ---------------- run ----------------
@@ -520,9 +622,14 @@ for i, e in enumerate(events):
 
     expectation = build_expectation(prec_rows)
 
-    print("  analysing what makes this event different...")
-    notes = ai_important_notes(e, prec_rows)
+    print("  running diagnostics...")
+    diagnostics = build_diagnostics(e, prec_rows)
+    if diagnostics:
+        print(f"    {diagnostics['summary']}")
 
-    publish(cid, e, prec_rows, expectation, notes)
+    print("  assessing what differs from the precedents...")
+    notes = ai_important_notes(e, prec_rows, diagnostics)
+
+    publish(cid, e, prec_rows, expectation, diagnostics, notes)
 
 print("\nDetection complete.")
