@@ -45,23 +45,33 @@ Passing validation means a measurement is statistically real. It does not mean i
 Separating this from interpretation was a deliberate fix. One section originally tried to do both jobs, judge whether the numbers could be trusted and explain what they meant. Given a quota to fill and two jobs to do, it produced five notes on a single event that all restated the same underlying point. With the trust question handled by computed diagnostics, the interpretation section shrank to its real job: what has materially changed between the precedent conditions and today.
 
 ## Architecture
+
+```
 Live news (Currents API)
-│
-▼
+        │
+        ▼
 Event detection (Anthropic, Haiku)
-│
-▼
-Per-event precedent research ──▶ Event-study engine ──▶ Validation gates
-│ (pandas, yfinance) significance
-▼ plausibility
-Diagnostics layer date confidence
-concentration, confounding, anticipation
-│
-▼
+        │
+        ▼
+Per-event precedent research
+        │
+        ▼
+Event-study engine (pandas, yfinance)
+        │
+        ▼
+Validation gates
+  significance, plausibility, date confidence
+        │
+        ▼
+Diagnostics layer
+  concentration, confounding, anticipation
+        │
+        ▼
 Supabase (PostgreSQL)
-│
-▼
+        │
+        ▼
 React frontend, reading directly from Supabase, no backend server
+```
 
 Two tables carry the system. `events` is the live feed: detected events, breaking on arrival, maturing over time. `curated_precedents` is the validated historical library, populated automatically as precedents pass validation and as feed events themselves mature into settled records. Cached precedents are re-validated against the current bar on reuse, so tightening the gate retroactively excludes entries measured under looser rules.
 
