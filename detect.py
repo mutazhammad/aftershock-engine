@@ -16,6 +16,12 @@ DISCLAIMER = "This tool informs your decision. It does not give investment advic
 TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy crisis",
           "trade war tariffs", "invasion war", "OPEC oil", "nuclear missile"]
 
+# Calendar days of price history to download before an event. The engine wants up to
+# 250 TRADING days for its estimation window, ending 10 trading days before the event.
+# Trading days run about 0.69 of calendar days, so 430 gives roughly 295 trading days,
+# comfortably above what the engine needs.
+LOOKBACK_DAYS = 430
+
 # ---------- baskets ----------
 ENERGY = {"Oil tanker operators": ["STNG", "FRO", "INSW"],
           "Oil & gas producers": ["XOM", "CVX", "COP"],
@@ -122,6 +128,17 @@ def cache_put(record, top):
         headers={**AUTH, "Content-Type": "application/json",
                  "Prefer": "resolution=merge-duplicates,return=minimal"},
         data=json.dumps([row]), timeout=30)
+
+
+def is_current_measurement(data):
+    """Records measured before the estimation-window significance test lack the
+    'measurement' block and the per-sector 'significance' label. Their t-statistics
+    came from the old underpowered in-window test, so they must be re-measured rather
+    than judged against the current bar."""
+    if not data.get("measurement"):
+        return False
+    reaction = data.get("reaction") or []
+    return bool(reaction) and all("significance" in r for r in reaction)
 
 
 # ---------- news ----------
@@ -273,16 +290,19 @@ def measure_precedent(p, etype):
     if conf != "high":
         return None, f"date confidence '{conf}'"
 
+    # Reuse the cache only if the stored record was measured under the CURRENT
+    # methodology. Anything older gets re-measured below rather than judged on
+    # t-statistics from the old underpowered test.
     cached = cache_get(pid)
-    if cached and (cached.get("data") or {}).get("reaction"):
+    if cached and is_current_measurement(cached.get("data") or {}):
         d = cached["data"]
         cfg = TYPE_CONFIG.get(etype, {"basket": ENERGY, "expect": {}})
         sig_ok, sig_why = has_signal(d)
         if not sig_ok:
-            return None, f"cached but fails current bar, {sig_why}"
+            return None, f"cached, {sig_why}"
         ok, why = plausible(d, cfg["expect"])
         if not ok:
-            return None, f"cached but fails current bar, implausible, {why}"
+            return None, f"cached, implausible, {why}"
         d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
         d["anticipated"] = p.get("anticipated", d.get("anticipated", ""))
         return cached, "cached, re-validated"
@@ -300,7 +320,7 @@ def measure_precedent(p, etype):
 
     EVENT = {"event_id": pid, "name": p.get("name", ""), "type_label": etype,
              "information_date": date, "announcement_date": date, "benchmark": "^GSPC",
-             "download_start": (ev - timedelta(days=280)).strftime("%Y-%m-%d"),
+             "download_start": (ev - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
              "download_end": (ev + timedelta(days=60)).strftime("%Y-%m-%d"),
              "snap_window": (-2, 5), "full_window": (-5, 30), "region": p.get("region", "")}
     NARRATIVE = {"sources": [], "status": "confirmed", "recency": "settled",
@@ -325,8 +345,9 @@ def measure_precedent(p, etype):
     record["anticipated"] = p.get("anticipated", "")
     record["validation"] = {"plausibility": why, "signal": sig_why, "date_confidence": conf}
     cache_put(record, dict(top))
+    est = (record.get("measurement") or {}).get("estimation_days")
     return {"id": pid, "name": p.get("name", ""), "information_date": date,
-            "data": record}, f"measured ({why})"
+            "data": record}, f"measured ({why}, est {est}d)"
 
 
 # ---------- DIAGNOSTICS ----------
@@ -430,11 +451,20 @@ def build_diagnostics(event, prec_rows):
                      f"contained a confounding development")
     summary = ". ".join(parts) + "."
 
+    est_days = [(p.get("data") or {}).get("measurement", {}).get("estimation_days")
+                for p in prec_rows]
+    est_days = [d for d in est_days if d]
+    date_basis = ("Every precedent used here was dated with high confidence and anchored "
+                  "to the information date, the first trading day markets could plausibly "
+                  "have known.")
+    if est_days:
+        date_basis += (f" Each reaction was tested against normal volatility estimated "
+                       f"over roughly {int(sum(est_days)/len(est_days))} trading days of "
+                       f"clean pre-event history.")
+
     return {
         "summary": summary,
-        "date_basis": ("Every precedent used here was dated with high confidence and "
-                       "anchored to the information date, the first trading day markets "
-                       "could plausibly have known."),
+        "date_basis": date_basis,
         "concentration": concentration,
         "anticipation": anticipation,
         "confounding": confounding,
@@ -509,7 +539,9 @@ def build_expectation(prec_rows):
                 continue
             sector_moves.setdefault(r["sector"], []).append((pct, bool(r.get("significant"))))
             rows.append({"sector": r["sector"], "pct": r["pct"], "value": pct,
-                         "significant": bool(r.get("significant")), "t_stat": r.get("t_stat")})
+                         "significant": bool(r.get("significant")),
+                         "significance": r.get("significance", ""),
+                         "t_stat": r.get("t_stat")})
         vol = d.get("volatility") or {}
         vix = vol.get("vix")
         per_precedent.append({"id": p["id"], "name": p.get("name", ""),
