@@ -1,6 +1,10 @@
 """Aftershock — event configs. One dict per event in EVENTS.
 run_pipeline.py passes EVENT / BASKETS / COMPANY_INFO / NARRATIVE to the engine.
 Numbers are computed by the engine; the text below is authored.
+
+download_start is set roughly fourteen months before the information date so the
+engine has enough clean pre-event history for its estimation window, which runs up
+to 250 trading days ending ten trading days before the event.
 """
 
 # ---------- shared across all energy-shock events ----------
@@ -41,7 +45,7 @@ EVENTS = [
             "information_date": "2026-02-27",
             "announcement_date": "2026-03-04",
             "benchmark": "^GSPC",
-            "download_start": "2025-06-01",
+            "download_start": "2025-01-01",
             "download_end": "2026-05-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -57,17 +61,17 @@ EVENTS = [
             "key_metrics": [{"label": "Brent oil", "value": "$126", "tone": "neutral"}],
             "summary": (
                 "When the Strait closed, oil, shipping, defense and gold stocks rose and airlines "
-                "fell — the textbook reaction to an energy-supply shock. The moves pointed the right "
+                "fell, the textbook reaction to an energy-supply shock. The moves pointed the right "
                 "way but over the first week most were within normal market swings. The one clear, "
                 "lasting effect was a drop in airline stocks that held for weeks. Energy and gold "
                 "gains faded after the 8 April ceasefire."
             ),
             "lasting_finding": (
-                "Over the following weeks airline stocks fell and stayed down — the move large and "
+                "Over the following weeks airline stocks fell and stayed down, the move large and "
                 "consistent enough to be statistically reliable."
             ),
             "timeline": [
-                {"datetime": "28 Feb 2026", "headline": "US–Israel strikes on Iran begin",
+                {"datetime": "28 Feb 2026", "headline": "US-Israel strikes on Iran begin",
                  "detail": "Markets first learn of the conflict; risk assets start repricing.", "source": "Reuters"},
                 {"datetime": "4 Mar 2026", "headline": "Iran declares the Strait closed",
                  "detail": "IRGC announces closure of the Strait of Hormuz to shipping.", "source": "IRGC"},
@@ -108,7 +112,7 @@ EVENTS = [
             "information_date": "2019-09-16",
             "announcement_date": "2019-09-14",
             "benchmark": "^GSPC",
-            "download_start": "2019-04-01",
+            "download_start": "2018-07-01",
             "download_end": "2019-12-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -164,7 +168,7 @@ EVENTS = [
             "information_date": "2022-02-24",
             "announcement_date": "2022-02-24",
             "benchmark": "^GSPC",
-            "download_start": "2021-08-01",
+            "download_start": "2020-12-01",
             "download_end": "2022-06-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -181,7 +185,7 @@ EVENTS = [
             "summary": (
                 "Russia's invasion of Ukraine triggered a prolonged energy shock. Sanctions and "
                 "supply fears sent oil and gas prices sharply higher and kept them elevated for "
-                "months. Energy and defense stocks rose while broad markets fell — and unlike a "
+                "months. Energy and defense stocks rose while broad markets fell, and unlike a "
                 "single-facility attack, the disruption was sustained rather than transient."
             ),
             "lasting_finding": (
@@ -210,7 +214,9 @@ EVENTS = [
             ),
         },
     },
-{
+
+    # ========== IRAN-ISRAEL 2024 ==========
+    {
         "event_id": "iran_israel_2024_04",
         "EVENT": {
             "event_id": "iran_israel_2024_04",
@@ -219,7 +225,7 @@ EVENTS = [
             "information_date": "2024-04-12",   # Fri before the Apr 13 attack
             "announcement_date": "2024-04-13",
             "benchmark": "^GSPC",
-            "download_start": "2023-10-01",
+            "download_start": "2023-02-01",
             "download_end": "2024-06-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -248,7 +254,9 @@ EVENTS = [
             "confidence": "A serious escalation but no actual supply cut; the market reaction was real but short-lived.",
         },
     },
-{
+
+    # ========== OPEC+ CUT 2022 ==========
+    {
         "event_id": "opec_cut_2022_10",
         "EVENT": {
             "event_id": "opec_cut_2022_10",
@@ -257,7 +265,7 @@ EVENTS = [
             "information_date": "2022-10-05",   # the cut announcement
             "announcement_date": "2022-10-05",
             "benchmark": "^GSPC",
-            "download_start": "2022-04-01",
+            "download_start": "2021-08-01",
             "download_end": "2022-12-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -270,7 +278,7 @@ EVENTS = [
             "sources": ["Reuters", "Bloomberg", "OPEC"],
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Brent oil", "value": "$93", "tone": "neutral"}],
-            "summary": "OPEC+ announced a large output cut, deliberately tightening global oil supply. Unlike a conflict shock, this was a policy decision — energy producers gained on higher prices, while the broader market weighed the inflation implications.",
+            "summary": "OPEC+ announced a large output cut, deliberately tightening global oil supply. Unlike a conflict shock, this was a policy decision: energy producers gained on higher prices, while the broader market weighed the inflation implications.",
             "lasting_finding": "Oil producers gained on the deliberate supply tightening; the effect was policy-driven and more durable than a conflict scare.",
             "timeline": [
                 {"datetime": "5 Oct 2022", "headline": "OPEC+ agrees to cut output by 2 million bpd", "detail": "The largest cut since the pandemic tightens global supply.", "source": "Reuters"},
@@ -284,7 +292,9 @@ EVENTS = [
             "confidence": "A deliberate policy cut rather than a disruption; the energy reaction was clear and supply-driven.",
         },
     },
-{
+
+    # ========== LIBYA 2011 ==========
+    {
         "event_id": "libya_2011_02",
         "EVENT": {
             "event_id": "libya_2011_02",
@@ -293,7 +303,7 @@ EVENTS = [
             "information_date": "2011-02-17",   # start of the uprising
             "announcement_date": "2011-02-17",
             "benchmark": "^GSPC",
-            "download_start": "2010-08-01",
+            "download_start": "2009-12-01",
             "download_end": "2011-05-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -325,7 +335,9 @@ EVENTS = [
             "confidence": "A prolonged real supply loss; older data means a slightly reduced basket, but the energy signal is clear.",
         },
     },
-{
+
+    # ========== EVER GIVEN 2021 ==========
+    {
         "event_id": "ever_given_2021_03",
         "EVENT": {
             "event_id": "ever_given_2021_03",
@@ -334,7 +346,7 @@ EVENTS = [
             "information_date": "2021-03-23",   # grounding date
             "announcement_date": "2021-03-23",
             "benchmark": "^GSPC",
-            "download_start": "2020-09-01",
+            "download_start": "2020-01-01",
             "download_end": "2021-06-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -362,7 +374,7 @@ EVENTS = [
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Days blocked", "value": "6", "tone": "neutral"}],
             "summary": "The Ever Given grounded and blocked the Suez Canal for six days, halting a major share of global container traffic. Because it was an accident expected to resolve quickly, markets treated it as a transient logistics event rather than a structural shock.",
-            "lasting_finding": "The reaction was muted and short-lived — markets correctly priced a temporary blockage that was cleared within a week.",
+            "lasting_finding": "The reaction was muted and short-lived; markets correctly priced a temporary blockage that was cleared within a week.",
             "timeline": [
                 {"datetime": "23 Mar 2021", "headline": "Ever Given runs aground", "detail": "The container ship blocks the Suez Canal, halting traffic in both directions.", "source": "Reuters"},
                 {"datetime": "29 Mar 2021", "headline": "Ship refloated", "detail": "The Ever Given is freed and traffic resumes; the disruption ends.", "source": "Suez Canal Authority"},
@@ -373,10 +385,12 @@ EVENTS = [
                 {"sector": "Air freight", "usual": "Rises (reroute)", "this_event": "Mixed", "match": False},
             ],
             "historical_precedents": [], "companies_in_news": [],
-            "confidence": "A transient accident, not a structural shock — expect small, short-lived reactions. A useful example of what a non-event looks like.",
+            "confidence": "A transient accident, not a structural shock, so expect small, short-lived reactions. ZIM listed only in January 2021, so the pre-event history available for this event is unusually short and the significance test is correspondingly weaker.",
         },
     },
-{
+
+    # ========== RED SEA 2023 ==========
+    {
         "event_id": "red_sea_2023_12",
         "EVENT": {
             "event_id": "red_sea_2023_12",
@@ -385,7 +399,7 @@ EVENTS = [
             "information_date": "2023-12-18",   # major carriers suspend Red Sea transit
             "announcement_date": "2023-12-18",
             "benchmark": "^GSPC",
-            "download_start": "2023-06-01",
+            "download_start": "2022-10-01",
             "download_end": "2024-03-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -413,7 +427,7 @@ EVENTS = [
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Suez transit drop", "value": "~90%", "tone": "neutral"}],
             "summary": "Houthi attacks forced major shipping lines to suspend Red Sea transit and reroute around the Cape of Good Hope, adding weeks to Asia-Europe voyages. Unlike a single-facility shock, this was a prolonged disruption that pushed freight rates sharply higher over months.",
-            "lasting_finding": "Because the disruption was sustained, container-freight strength persisted rather than reverting within weeks — a slow-burn shipping shock.",
+            "lasting_finding": "Because the disruption was sustained, container-freight strength persisted rather than reverting within weeks, a slow-burn shipping shock.",
             "timeline": [
                 {"datetime": "19 Nov 2023", "headline": "Houthis begin attacking commercial vessels", "detail": "Attacks on Red Sea shipping start, targeting vessels linked to Israel.", "source": "Reuters"},
                 {"datetime": "18 Dec 2023", "headline": "Major carriers suspend Red Sea transit", "detail": "Maersk, MSC, BP and others reroute around the Cape of Good Hope.", "source": "Maersk"},
@@ -428,7 +442,9 @@ EVENTS = [
             "confidence": "A prolonged, well-documented shipping disruption; the freight-rate signal was strong and sustained.",
         },
     },
-{
+
+    # ========== CHIP CONTROLS 2022 ==========
+    {
         "event_id": "chip_controls_2022_10",
         "EVENT": {
             "event_id": "chip_controls_2022_10",
@@ -437,7 +453,7 @@ EVENTS = [
             "information_date": "2022-10-07",   # BIS rules announced
             "announcement_date": "2022-10-07",
             "benchmark": "^GSPC",
-            "download_start": "2022-04-01",
+            "download_start": "2021-08-01",
             "download_end": "2022-12-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -462,7 +478,7 @@ EVENTS = [
             "sources": ["Reuters", "Bloomberg", "US Commerce Dept"],
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Sector", "value": "Semiconductors", "tone": "neutral"}],
-            "summary": "The US imposed sweeping controls blocking China's access to advanced chips and chipmaking equipment. This targeted a specific sector rather than energy — chip-equipment makers with heavy China revenue were hit hardest as investors priced in lost sales.",
+            "summary": "The US imposed sweeping controls blocking China's access to advanced chips and chipmaking equipment. This targeted a specific sector rather than energy: chip-equipment makers with heavy China revenue were hit hardest as investors priced in lost sales.",
             "lasting_finding": "Chip-equipment firms with the largest China exposure saw the sharpest reaction; the impact was sector-specific, not market-wide.",
             "timeline": [
                 {"datetime": "7 Oct 2022", "headline": "US announces sweeping chip export controls", "detail": "New rules block China's access to advanced semiconductors and equipment.", "source": "Reuters"},
@@ -476,7 +492,9 @@ EVENTS = [
             "confidence": "A targeted sector shock; the reaction was concentrated in China-exposed chip names, as expected.",
         },
     },
-{
+
+    # ========== ISRAEL-HAMAS 2023 ==========
+    {
         "event_id": "israel_hamas_2023_10",
         "EVENT": {
             "event_id": "israel_hamas_2023_10",
@@ -485,7 +503,7 @@ EVENTS = [
             "information_date": "2023-10-06",   # Fri before the Oct 7 attack
             "announcement_date": "2023-10-07",
             "benchmark": "^GSPC",
-            "download_start": "2023-04-01",
+            "download_start": "2022-08-01",
             "download_end": "2023-12-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -514,7 +532,9 @@ EVENTS = [
             "confidence": "A major conflict but no direct oil-supply disruption; defense reacted clearly, energy more modestly.",
         },
     },
-{
+
+    # ========== IRAN SANCTIONS 2018 ==========
+    {
         "event_id": "iran_sanctions_2018_11",
         "EVENT": {
             "event_id": "iran_sanctions_2018_11",
@@ -523,7 +543,7 @@ EVENTS = [
             "information_date": "2018-11-05",   # sanctions take effect
             "announcement_date": "2018-11-05",
             "benchmark": "^GSPC",
-            "download_start": "2018-05-01",
+            "download_start": "2017-09-01",
             "download_end": "2019-01-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -537,7 +557,7 @@ EVENTS = [
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Brent oil", "value": "$73", "tone": "neutral"}],
             "summary": "The US reimposed sanctions targeting Iran's oil exports, aiming to cut a major supplier off from world markets. Because waivers softened the blow and supply fears were partly priced in, the reaction was more muted than a sudden physical disruption.",
-            "lasting_finding": "Waivers blunted the supply impact, so the oil reaction was contained rather than a sharp spike — a slower-burn sanctions effect.",
+            "lasting_finding": "Waivers blunted the supply impact, so the oil reaction was contained rather than a sharp spike, a slower-burn sanctions effect.",
             "timeline": [
                 {"datetime": "5 Nov 2018", "headline": "US reimposes Iran oil sanctions", "detail": "Sanctions target Iran's oil exports, with temporary waivers for some buyers.", "source": "Reuters"},
             ],
@@ -549,7 +569,9 @@ EVENTS = [
             "confidence": "Waivers meant the supply cut was partial; the market reaction was muted, showing sanctions are often slow-burn.",
         },
     },
-{
+
+    # ========== TRADE WAR 2019 ==========
+    {
         "event_id": "trade_war_2019_05",
         "EVENT": {
             "event_id": "trade_war_2019_05",
@@ -558,7 +580,7 @@ EVENTS = [
             "information_date": "2019-05-05",   # Trump tariff-hike tweet, Sunday
             "announcement_date": "2019-05-10",
             "benchmark": "^GSPC",
-            "download_start": "2018-11-01",
+            "download_start": "2018-03-01",
             "download_end": "2019-07-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -584,9 +606,9 @@ EVENTS = [
         "NARRATIVE": {
             "sources": ["Reuters", "Bloomberg", "WSJ"],
             "status": "confirmed", "recency": "settled",
-            "key_metrics": [{"label": "Tariff rate", "value": "10%→25%", "tone": "neutral"}],
+            "key_metrics": [{"label": "Tariff rate", "value": "10% to 25%", "tone": "neutral"}],
             "summary": "The US sharply escalated tariffs on Chinese goods, reigniting the trade war. Trade-exposed industrials and chipmakers fell on higher costs and demand fears, while gold rose as a safe haven amid the uncertainty.",
-            "lasting_finding": "Trade-sensitive industrials and semiconductors led the decline; the effect was broad-risk-off with safe havens gaining.",
+            "lasting_finding": "Trade-sensitive industrials and semiconductors led the decline; the effect was broad risk-off with safe havens gaining.",
             "timeline": [
                 {"datetime": "5 May 2019", "headline": "US threatens to raise tariffs to 25%", "detail": "A surprise escalation reignites trade-war fears.", "source": "Reuters"},
                 {"datetime": "10 May 2019", "headline": "Tariff hike takes effect", "detail": "Tariffs on $200bn of Chinese goods rise to 25%.", "source": "WSJ"},
@@ -600,7 +622,9 @@ EVENTS = [
             "confidence": "A clear trade-escalation shock; trade-exposed sectors fell and safe havens rose, as expected.",
         },
     },
-{
+
+    # ========== NORTH KOREA 2017 ==========
+    {
         "event_id": "nkorea_2017_08",
         "EVENT": {
             "event_id": "nkorea_2017_08",
@@ -609,7 +633,7 @@ EVENTS = [
             "information_date": "2017-08-08",   # "fire and fury" remarks
             "announcement_date": "2017-08-08",
             "benchmark": "^GSPC",
-            "download_start": "2017-02-01",
+            "download_start": "2016-06-01",
             "download_end": "2017-10-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -648,7 +672,9 @@ EVENTS = [
             "confidence": "A pure risk-off scare with no economic supply channel; the safe-haven reaction was clear but temporary.",
         },
     },
-{
+
+    # ========== SVB 2023 ==========
+    {
         "event_id": "svb_2023_03",
         "EVENT": {
             "event_id": "svb_2023_03",
@@ -657,7 +683,7 @@ EVENTS = [
             "information_date": "2023-03-09",   # SVB deposit run begins
             "announcement_date": "2023-03-10",
             "benchmark": "^GSPC",
-            "download_start": "2022-09-01",
+            "download_start": "2022-01-01",
             "download_end": "2023-06-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -696,7 +722,9 @@ EVENTS = [
             "confidence": "A sharp, sector-specific banking shock; regional banks fell hard while contagion was contained.",
         },
     },
-{
+
+    # ========== OPEC PRICE WAR 2020 ==========
+    {
         "event_id": "opec_pricewar_2020_03",
         "EVENT": {
             "event_id": "opec_pricewar_2020_03",
@@ -705,7 +733,7 @@ EVENTS = [
             "information_date": "2020-03-06",   # OPEC+ talks collapse, Fri
             "announcement_date": "2020-03-09",
             "benchmark": "^GSPC",
-            "download_start": "2019-09-01",
+            "download_start": "2019-01-01",
             "download_end": "2020-06-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -718,8 +746,8 @@ EVENTS = [
             "sources": ["Reuters", "Bloomberg", "OPEC"],
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "Brent oil", "value": "crashed", "tone": "loss"}],
-            "summary": "When OPEC+ talks collapsed, Saudi Arabia launched a price war and flooded the market with oil, sending crude into one of its steepest crashes ever. This was an oversupply shock — the mirror image of a supply cut — hammering oil producers rather than lifting them.",
-            "lasting_finding": "Oil producers fell hard on the deliberate oversupply, showing the same 'energy shock' type can push producers down when supply floods rather than tightens.",
+            "summary": "When OPEC+ talks collapsed, Saudi Arabia launched a price war and flooded the market with oil, sending crude into one of its steepest crashes ever. This was an oversupply shock, the mirror image of a supply cut, hammering oil producers rather than lifting them.",
+            "lasting_finding": "Oil producers fell hard on the deliberate oversupply, showing the same energy-shock type can push producers down when supply floods rather than tightens.",
             "timeline": [
                 {"datetime": "6 Mar 2020", "headline": "OPEC+ talks collapse", "detail": "Russia and Saudi Arabia fail to agree on cuts; a price war begins.", "source": "Reuters"},
                 {"datetime": "9 Mar 2020", "headline": "Oil crashes", "detail": "Crude posts one of its largest single-day drops as Saudi Arabia floods the market.", "source": "Bloomberg"},
@@ -729,10 +757,12 @@ EVENTS = [
                 {"sector": "Oil & gas", "usual": "Falls (oversupply)", "this_event": "Fell", "match": True},
             ],
             "historical_precedents": [], "companies_in_news": [],
-            "confidence": "Overlaps the COVID crash, so the market-adjusted model is doing real work here — the oil-specific oversupply signal is the key read.",
+            "confidence": "Overlaps the COVID crash, so the market-adjusted model is doing real work here; the oil-specific oversupply signal is the key read.",
         },
     },
-{
+
+    # ========== TURKEY 2018 ==========
+    {
         "event_id": "turkey_2018_08",
         "EVENT": {
             "event_id": "turkey_2018_08",
@@ -741,7 +771,7 @@ EVENTS = [
             "information_date": "2018-08-10",   # lira crash accelerates
             "announcement_date": "2018-08-10",
             "benchmark": "^GSPC",
-            "download_start": "2018-02-01",
+            "download_start": "2017-06-01",
             "download_end": "2018-11-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -780,7 +810,9 @@ EVENTS = [
             "confidence": "A currency crisis with contained contagion; the flight-to-dollar and EM weakness were the clear signals.",
         },
     },
-{
+
+    # ========== BREXIT 2016 ==========
+    {
         "event_id": "brexit_2016_06",
         "EVENT": {
             "event_id": "brexit_2016_06",
@@ -789,7 +821,7 @@ EVENTS = [
             "information_date": "2016-06-24",   # result announced
             "announcement_date": "2016-06-24",
             "benchmark": "^GSPC",
-            "download_start": "2015-12-01",
+            "download_start": "2015-04-01",
             "download_end": "2016-09-01",
             "snap_window": (-2, 5),
             "full_window": (-5, 30),
@@ -812,7 +844,7 @@ EVENTS = [
             "sources": ["Reuters", "BBC", "FT"],
             "status": "confirmed", "recency": "settled",
             "key_metrics": [{"label": "GBP/USD", "value": "-8%", "tone": "loss"}],
-            "summary": "Britain's surprise vote to leave the EU shocked markets. The pound crashed to multi-decade lows and UK equities and global stocks dropped on the uncertainty, while gold surged as a safe haven — before broad markets recovered within weeks.",
+            "summary": "Britain's surprise vote to leave the EU shocked markets. The pound crashed to multi-decade lows and UK equities and global stocks dropped on the uncertainty, while gold surged as a safe haven, before broad markets recovered within weeks.",
             "lasting_finding": "The pound's fall was the durable effect; equity markets dropped sharply then recovered, showing a political shock without a direct economic supply channel.",
             "timeline": [
                 {"datetime": "24 Jun 2016", "headline": "UK votes to leave the EU", "detail": "The surprise result sends the pound and global equities sharply lower.", "source": "BBC"},
