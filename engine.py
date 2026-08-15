@@ -8,14 +8,55 @@ import pandas as pd
 import yfinance as yf
 
 
+# ---------- significance ----------
+def car_tstat(basket_ar, est_start, est_end, win_start, win_end):
+    """Test the cumulative abnormal return against the standard deviation of abnormal
+    returns over the ESTIMATION window, not the handful of days inside the event window.
+
+    Testing an 8-day window against its own variance has almost no statistical power:
+    a genuine 12% move lands at t=1.7 simply because n=8. The standard event-study
+    approach benchmarks the CAR against normal-period volatility instead, which is what
+    the ~250 days of pre-event data are for.
+
+    CAR over N days has standard error sigma_AR * sqrt(N), where sigma_AR is the daily
+    abnormal-return standard deviation estimated over the clean pre-event period.
+    """
+    est = basket_ar.iloc[est_start:est_end].dropna()
+    win = basket_ar.iloc[win_start:win_end].dropna()
+
+    if len(win) == 0:
+        return 0.0, 0.0
+    if len(est) < 30:
+        # not enough clean history to estimate normal volatility; fall back to the
+        # in-window test rather than returning a falsely confident number
+        s = win
+        if len(s) < 2 or s.std(ddof=1) == 0:
+            return 0.0, 0.0
+        return float(s.mean() / (s.std(ddof=1) / np.sqrt(len(s)))), 0.0
+
+    sigma_daily = float(est.std(ddof=1))
+    if sigma_daily == 0:
+        return 0.0, 0.0
+
+    car = float(win.sum())
+    se_car = sigma_daily * np.sqrt(len(win))
+    return float(car / se_car), sigma_daily
+
+
+def significance_label(t):
+    """Two tiers. |t| >= 1.96 is the conventional 5% level. |t| >= 1.65 is the 10%
+    level, reported separately as directional support rather than collapsed into
+    'not significant', since a large move that clears 10% but not 5% is a different
+    thing from noise."""
+    a = abs(t)
+    if a >= 1.96:
+        return "significant", True
+    if a >= 1.645:
+        return "directional", False
+    return "not_significant", False
+
+
 # ---------- helpers ----------
-def tstat(series):
-    s = series.dropna()
-    if len(s) < 2 or s.std(ddof=1) == 0:
-        return 0.0
-    return float(s.mean() / (s.std(ddof=1) / np.sqrt(len(s))))
-
-
 def win_bounds(pos, start, end, n):
     return max(pos + start, 0), min(pos + end + 1, n)
 
@@ -110,6 +151,13 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
     f0, f1 = win_bounds(pos, *EVENT["full_window"], n)
     days = [i - pos for i in range(f0, f1)]
 
+    # ESTIMATION WINDOW: clean pre-event period used to estimate normal volatility.
+    # Ends 10 trading days before the event so any early leakage does not contaminate
+    # the baseline. Runs back up to 250 trading days, roughly a year.
+    est_end = max(pos - 10, 0)
+    est_start = max(est_end - 250, 0)
+    est_len = est_end - est_start
+
     reaction, timeseries, phases = [], [], []
     for sector, members in BASKETS.items():
         have = [t for t in members if t in ar.columns]
@@ -118,12 +166,21 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
         basket_ar = ar[have].mean(axis=1)
         snap = basket_ar.iloc[s0:s1]
         car = float(snap.sum() * 100)
-        t = round(tstat(snap), 2)
+
+        t, sigma_daily = car_tstat(basket_ar, est_start, est_end, s0, s1)
+        t = round(t, 2)
+        label, is_sig = significance_label(t)
+
         path = (basket_ar.iloc[f0:f1].cumsum() * 100).round(2).tolist()
         reaction.append({
             "sector": sector, "tickers": ", ".join(have),
-            "pct": f"{car:+.1f}%", "significant": abs(t) >= 2.0,
-            "t_stat": t, "tone": "gain" if car >= 0 else "loss",
+            "pct": f"{car:+.1f}%",
+            "significant": is_sig,
+            "significance": label,          # "significant" | "directional" | "not_significant"
+            "t_stat": t,
+            "normal_vol_pct": (round(sigma_daily * (252 ** 0.5) * 100, 1)
+                               if sigma_daily else None),
+            "tone": "gain" if car >= 0 else "loss",
         })
         timeseries.append({"sector": sector, "car_path": path})
         ph = phase_summary(days, path); ph["sector"] = sector
@@ -174,6 +231,12 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
                        "markers": NARRATIVE.get("markers", [])},
         "phases": phases,
         "volatility": vol,
+        "measurement": {
+            "estimation_days": est_len,
+            "window_days": s1 - s0,
+            "method": ("CAR tested against abnormal-return volatility estimated over the "
+                       "pre-event window, ending 10 trading days before the event."),
+        },
         "historical": NARRATIVE.get("historical", []),
         "historical_precedents": NARRATIVE.get("historical_precedents", []),
         "companies_affected": companies_affected,
@@ -191,9 +254,10 @@ def run(EVENT, BASKETS, COMPANY_INFO, NARRATIVE):
     }
 
     # smell test — shows up in the GitHub Actions log so you can verify a run
-    print(f"  {EVENT['event_id']}: t0={rets.index[pos].date()} benchmark={bench_ret:+.1f}%")
+    print(f"  {EVENT['event_id']}: t0={rets.index[pos].date()} benchmark={bench_ret:+.1f}% "
+          f"(estimation window {est_len}d)")
     for r in reaction:
-        flag = "SIG" if r["significant"] else "n.s."
+        flag = {"significant": "SIG", "directional": "DIR", "not_significant": "n.s."}[r["significance"]]
         print(f"    {r['sector']:22s} {r['pct']:>7s} t={r['t_stat']:>5} {flag}")
     if vol.get("vix"):
         v = vol["vix"]
