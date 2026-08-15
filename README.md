@@ -4,6 +4,8 @@ Aftershock measures how geopolitical events move financial markets.
 
 It detects significant events from live news, researches historical precedents for each event, measures those precedents with a real event-study engine, and rejects any measurement that fails statistical validation before it reaches the site. The system runs unattended on a schedule.
 
+An early build anchored a Strait of Hormuz closure to its announcement date and got the wrong answer, because markets had already repriced days earlier. Most of the engineering here exists to stop that class of mistake from reaching a reader.
+
 **Live site:** https://aftershock-site-five.vercel.app/
 **Frontend repo:** https://github.com/mutazhammad/aftershock_site
 
@@ -126,10 +128,15 @@ Diagnostics layer
   concentration, confounding, anticipation
         │
         ▼
-Supabase (PostgreSQL)
-        │
-        ▼
-React frontend, reading directly from Supabase, no backend server
+Supabase (PostgreSQL)  ◀──────┐
+        │                     │
+        ▼                     │
+React frontend                │
+                              │
+mature.py re-measures aging   │
+events and writes them back ──┘
+Settled events then serve as
+precedents for future events
 ```
 
 Two tables carry the system.
@@ -171,12 +178,12 @@ Three scheduled GitHub Actions jobs run the system unattended:
 
 ## Stack
 
-- **Python, pandas, NumPy, yfinance** — event-study engine
-- **Supabase (PostgreSQL)** — data storage
-- **GitHub Actions** — scheduled automation
-- **Anthropic API** — event detection, precedent research, and analysis
-- **React** — frontend
-- **Vercel** — frontend deployment
+- **Python, pandas, NumPy, yfinance:** event-study engine
+- **Supabase (PostgreSQL):** data storage
+- **GitHub Actions:** scheduled automation
+- **Anthropic API:** event detection, precedent research, and analysis
+- **React:** frontend
+- **Vercel:** frontend deployment
 
 The React frontend reads directly from Supabase. There is no backend server between the frontend and the database.
 
@@ -192,14 +199,4 @@ With twice-daily detection and the daily maturation job, the entire system runs 
 
 Aftershock does not predict markets and does not give investment advice. A disclaimer appears on every report it produces.
 
-It measures what happened in comparable past events, checks whether those measurements can be trusted, and states plainly when the comparison is weak.
-
-It is a demonstration of:
-
-- Event-study methodology
-- Automated precedent research
-- Statistical validation
-- Diagnostic analysis
-- Automated data pipelines
-
-It is not a trading signal.
+It measures what happened in comparable past events, checks whether those measurements can be trusted, and states plainly when the comparison is weak. It is not a trading signal.
