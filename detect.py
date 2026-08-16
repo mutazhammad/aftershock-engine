@@ -213,14 +213,22 @@ def ai_find_events(articles):
 # ---------- precedent research ----------
 def ai_research_precedents(event):
     system = (
-        "You are a financial-markets historian. Identify HISTORICAL PRECEDENTS for a "
-        "current event, meaning past events with the same market transmission mechanism. "
-        "ACCURACY IS PARAMOUNT. Propose an event only if it is a genuine mechanism match. "
-        "A policy action and a physical blockade are not interchangeable even in the same "
-        "region. Two strong precedents are worth more than five loose ones, so propose "
-        "fewer rather than padding the list. Only events from 2005 onward.\n\n"
-        "For the INFORMATION DATE, give the first trading day markets could realistically "
-        "have known, and rate your confidence honestly using this scale:\n"
+        "You are a financial-markets historian identifying historical precedents by "
+        "MECHANISM FIT, not by fame. This is important: well-known events like Abqaiq, "
+        "the Russia invasion, or Brexit are NOT preferred by default. A smaller, less "
+        "widely covered event that shares the exact transmission mechanism is a BETTER "
+        "precedent than a famous event whose mechanism only loosely resembles the "
+        "current one. Resist the pull toward the first famous analog that comes to "
+        "mind; actively consider narrower, more specific, less prominent events first.\n\n"
+        "ACCURACY IS PARAMOUNT. Propose an event only if it shares the exact causal "
+        "chain: the same type of shock, reaching markets through the same channel, "
+        "affecting the same kind of exposure. A policy action and a physical blockade "
+        "are not interchangeable even in the same region. Two strong, narrowly-matched "
+        "precedents are worth more than five loose ones, so propose fewer rather than "
+        "padding the list. Do not propose the SAME historical event twice under "
+        "different names. Only events from 2005 onward.\n\n"
+        "For the INFORMATION DATE, give the first trading day markets could "
+        "realistically have known, and rate your confidence honestly:\n"
         "  high: you are certain of the specific trading day\n"
         "  medium: you know the week or the few-day span but not the exact day\n"
         "  low: you are unsure even of the week\n"
@@ -232,8 +240,22 @@ def ai_research_precedents(event):
         f"Type: {event.get('event_type','')}\n"
         f"What happened: {event.get('what_happened','')}\n"
         f"Mechanism: {event.get('transmission_mechanism','')}\n\n"
-        "Return ONLY JSON, up to 5 precedents, fewer if fewer genuinely match:\n"
+        "First, think through this in two steps before answering:\n"
+        "1. List 6 to 10 candidate historical events that share some aspect of this "
+        "mechanism, deliberately including less prominent ones alongside any famous "
+        "ones that come to mind. Do not skip this step by only listing famous events.\n"
+        "2. For each candidate, score MECHANISM FIT as close, partial, or loose, based "
+        "strictly on whether the causal chain matches, not on how well documented the "
+        "event is. Discard anything scored loose.\n\n"
+        "Then return ONLY a JSON array of up to 5 precedents from the close or partial "
+        "candidates, fewer if fewer genuinely qualify, each a DISTINCT historical event, "
+        "prioritising close fits over partial ones and never substituting a famous loose "
+        "fit for a close but obscure one:\n"
         '[{"id":"snake_case_id_with_year","name":"Event name",'
+        ' "mechanism_fit":"close|partial",'
+        ' "fit_reasoning":"one sentence on specifically which part of the causal chain '
+        'matches, naming the shared mechanism explicitly, not just the shared region or '
+        'topic",'
         ' "information_date":"YYYY-MM-DD","date_confidence":"high|medium|low",'
         ' "date_reasoning":"why this is the information date, and if confidence is medium, '
         'what specifically is uncertain about the exact day",'
@@ -241,13 +263,12 @@ def ai_research_precedents(event):
         'markets likely price it in early. One sentence.",'
         ' "why_relevant":"why this is a precedent, focused on the shared transmission '
         'mechanism. Two sentences maximum.",'
-        ' "region":"region"}]  Only JSON.'
+        ' "region":"region"}]  Return only the JSON array, not your step 1 and 2 working.'
     )
     try:
-        return json.loads(ask(system, user, max_tokens=2500))
+        return json.loads(ask(system, user, max_tokens=3000))
     except Exception:
         return []
-
 
 # ---------- validation ----------
 def era_safe(basket, year):
