@@ -18,8 +18,6 @@ TOPICS = ["geopolitical conflict", "sanctions", "military strike", "oil energy c
 
 # Calendar days of price history to download before an event. The engine wants up to
 # 250 TRADING days for its estimation window, ending 10 trading days before the event.
-# Trading days run about 0.69 of calendar days, so 430 gives roughly 295 trading days,
-# comfortably above what the engine needs.
 LOOKBACK_DAYS = 430
 
 # ---------- baskets ----------
@@ -58,6 +56,12 @@ TICKER_START = {"STNG": 2010, "FRO": 2001, "INSW": 2017, "XOM": 1990, "CVX": 199
     "WMT": 1990, "TGT": 1990, "CAT": 1990, "DE": 1990, "BA": 1990, "NVDA": 1999,
     "AMD": 1990, "INTC": 1990, "SPY": 1993, "TLT": 2002, "KRE": 2006, "JPM": 1990,
     "BAC": 1990}
+
+# Date confidence accepted into the precedent set. 'high' means the specific trading
+# day is known. 'medium' means the week is known but not the exact day, which is
+# weaker evidence but still usable when the measurement itself holds up. Anything
+# lower is rejected outright.
+ACCEPTED_DATE_CONFIDENCE = {"high", "medium"}
 
 
 def ask(system, user, max_tokens=3000):
@@ -133,8 +137,7 @@ def cache_put(record, top):
 def is_current_measurement(data):
     """Records measured before the estimation-window significance test lack the
     'measurement' block and the per-sector 'significance' label. Their t-statistics
-    came from the old underpowered in-window test, so they must be re-measured rather
-    than judged against the current bar."""
+    came from the old underpowered in-window test, so they must be re-measured."""
     if not data.get("measurement"):
         return False
     reaction = data.get("reaction") or []
@@ -215,10 +218,14 @@ def ai_research_precedents(event):
         "ACCURACY IS PARAMOUNT. Propose an event only if it is a genuine mechanism match. "
         "A policy action and a physical blockade are not interchangeable even in the same "
         "region. Two strong precedents are worth more than five loose ones, so propose "
-        "fewer rather than padding the list. For each, give the INFORMATION DATE, the "
-        "first trading day markets could realistically have known, and rate confidence "
-        "honestly. Use 'high' only if certain of the specific day. Only events from 2005 "
-        "onward. Do not guess dates."
+        "fewer rather than padding the list. Only events from 2005 onward.\n\n"
+        "For the INFORMATION DATE, give the first trading day markets could realistically "
+        "have known, and rate your confidence honestly using this scale:\n"
+        "  high: you are certain of the specific trading day\n"
+        "  medium: you know the week or the few-day span but not the exact day\n"
+        "  low: you are unsure even of the week\n"
+        "Medium is a legitimate and useful answer. Do not inflate to high, and do not "
+        "deflate a date you genuinely know to the week down to low."
     )
     user = (
         f"CURRENT EVENT:\nHeadline: {event.get('headline','')}\n"
@@ -228,7 +235,8 @@ def ai_research_precedents(event):
         "Return ONLY JSON, up to 5 precedents, fewer if fewer genuinely match:\n"
         '[{"id":"snake_case_id_with_year","name":"Event name",'
         ' "information_date":"YYYY-MM-DD","date_confidence":"high|medium|low",'
-        ' "date_reasoning":"why this is the information date",'
+        ' "date_reasoning":"why this is the information date, and if confidence is medium, '
+        'what specifically is uncertain about the exact day",'
         ' "anticipated":"was this event anticipated before the information date, and did '
         'markets likely price it in early. One sentence.",'
         ' "why_relevant":"why this is a precedent, focused on the shared transmission '
@@ -251,33 +259,65 @@ def era_safe(basket, year):
     return out
 
 
+def sector_tiers(record):
+    """Split sectors by evidence tier. 'significant' clears the conventional 5 percent
+    level; 'directional' clears 10 percent, which many published event studies report
+    and which is meaningfully different from noise."""
+    strong, directional = [], []
+    for r in record.get("reaction", []):
+        tier = r.get("significance")
+        if tier == "significant":
+            strong.append(r)
+        elif tier == "directional":
+            directional.append(r)
+    return strong, directional
+
+
 def plausible(record, expect):
-    """A directional expectation must be met by a SIGNIFICANT sector, not any sector."""
-    sig_moves = {r["sector"]: r["tone"] for r in record.get("reaction", [])
-                 if r.get("significant")}
+    """A directional expectation must be met by a sector that clears at least the
+    10 percent level. Noise does not count as confirmation."""
+    strong, directional = sector_tiers(record)
+    moves = {r["sector"]: r["tone"] for r in strong + directional}
     if not expect:
         return True, "no directional expectation"
     m = sum(1 for s, d in expect.items()
-            if sig_moves.get(s) == ("gain" if d == "up" else "loss"))
-    return m >= 1, f"{m}/{len(expect)} expected moves matched with significance"
+            if moves.get(s) == ("gain" if d == "up" else "loss"))
+    return m >= 1, f"{m}/{len(expect)} expected moves matched"
 
 
 def has_signal(record):
-    """At least one sector must be statistically significant. A large but noisy move
-    is not evidence."""
-    moves, sig_count = [], 0
+    """At least one sector must clear the 10 percent level. Returns the evidence tier
+    so the precedent can be labelled by strength rather than treated as binary."""
+    strong, directional = sector_tiers(record)
+    moves = []
     for r in record.get("reaction", []):
         try:
             moves.append(abs(float(str(r["pct"]).replace("%", "").replace("+", ""))))
         except Exception:
             continue
-        if r.get("significant"):
-            sig_count += 1
     if not moves:
-        return False, "no measurable reaction"
-    if sig_count == 0:
-        return False, f"largest move {max(moves):.1f}% but nothing statistically significant"
-    return True, f"largest move {max(moves):.1f}%, {sig_count} sector(s) significant"
+        return False, "strong", "no measurable reaction"
+    if strong:
+        return True, "strong", (f"{len(strong)} sector(s) significant at the 5% level, "
+                                f"largest move {max(moves):.1f}%")
+    if directional:
+        return True, "directional", (f"{len(directional)} sector(s) significant at the 10% "
+                                     f"level only, largest move {max(moves):.1f}%")
+    return False, "none", f"largest move {max(moves):.1f}% but nothing clears the 10% level"
+
+
+def evidence_tier(signal_tier, date_conf):
+    """Combine measurement strength and date certainty into one label the site can show."""
+    if signal_tier == "strong" and date_conf == "high":
+        return "strong", "Significant at the 5% level, with a precisely dated event."
+    if signal_tier == "strong":
+        return "moderate", ("Significant at the 5% level, but the exact information date "
+                            "is known only to within a few days.")
+    if date_conf == "high":
+        return "moderate", ("Significant at the 10% level only, with a precisely dated "
+                            "event. A weaker statistical result.")
+    return "weak", ("Significant at the 10% level only, and the exact information date is "
+                    "known only to within a few days. Read with caution.")
 
 
 def measure_precedent(p, etype):
@@ -287,25 +327,28 @@ def measure_precedent(p, etype):
 
     if not pid or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date)):
         return None, "bad id or date"
-    if conf != "high":
+    if conf not in ACCEPTED_DATE_CONFIDENCE:
         return None, f"date confidence '{conf}'"
 
     # Reuse the cache only if the stored record was measured under the CURRENT
-    # methodology. Anything older gets re-measured below rather than judged on
-    # t-statistics from the old underpowered test.
+    # methodology. Anything older gets re-measured rather than judged on stale numbers.
     cached = cache_get(pid)
     if cached and is_current_measurement(cached.get("data") or {}):
         d = cached["data"]
         cfg = TYPE_CONFIG.get(etype, {"basket": ENERGY, "expect": {}})
-        sig_ok, sig_why = has_signal(d)
+        sig_ok, sig_tier, sig_why = has_signal(d)
         if not sig_ok:
             return None, f"cached, {sig_why}"
         ok, why = plausible(d, cfg["expect"])
         if not ok:
             return None, f"cached, implausible, {why}"
+        tier, tier_note = evidence_tier(sig_tier, conf)
         d["why_relevant"] = p.get("why_relevant", d.get("why_relevant", ""))
         d["anticipated"] = p.get("anticipated", d.get("anticipated", ""))
-        return cached, "cached, re-validated"
+        d["evidence_tier"] = tier
+        d["evidence_note"] = tier_note
+        d["date_confidence"] = conf
+        return cached, f"cached, {tier} ({sig_tier} signal, {conf} date)"
 
     ev = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if ev.year < 2005:
@@ -333,21 +376,28 @@ def measure_precedent(p, etype):
     except Exception as e:
         return None, f"measurement failed ({str(e)[:40]})"
 
-    sig_ok, sig_why = has_signal(record)
+    sig_ok, sig_tier, sig_why = has_signal(record)
     if not sig_ok:
         return None, sig_why
     ok, why = plausible(record, cfg["expect"])
     if not ok:
         return None, f"implausible, {why}"
 
+    tier, tier_note = evidence_tier(sig_tier, conf)
     record["why_relevant"] = p.get("why_relevant", "")
     record["date_reasoning"] = p.get("date_reasoning", "")
     record["anticipated"] = p.get("anticipated", "")
-    record["validation"] = {"plausibility": why, "signal": sig_why, "date_confidence": conf}
+    record["date_confidence"] = conf
+    record["evidence_tier"] = tier
+    record["evidence_note"] = tier_note
+    record["validation"] = {"plausibility": why, "signal": sig_why,
+                            "signal_tier": sig_tier, "date_confidence": conf,
+                            "evidence_tier": tier}
     cache_put(record, dict(top))
     est = (record.get("measurement") or {}).get("estimation_days")
-    return {"id": pid, "name": p.get("name", ""), "information_date": date,
-            "data": record}, f"measured ({why}, est {est}d)"
+    return ({"id": pid, "name": p.get("name", ""), "information_date": date,
+             "data": record},
+            f"{tier} ({sig_tier} signal, {conf} date, est {est}d)")
 
 
 # ---------- DIAGNOSTICS ----------
@@ -357,7 +407,8 @@ def concentration_check(prec_rows):
     flags = []
     for p in prec_rows:
         d = p.get("data") or {}
-        sig_sectors = {r["sector"] for r in d.get("reaction", []) if r.get("significant")}
+        sig_sectors = {r["sector"] for r in d.get("reaction", [])
+                       if r.get("significance") in ("significant", "directional")}
         by_sector = {}
         for c in d.get("companies_affected", []):
             if c.get("sector") not in sig_sectors:
@@ -387,6 +438,23 @@ def concentration_check(prec_rows):
                                f"as a single-company result rather than a sector-wide one."),
                 })
     return flags
+
+
+def date_certainty_check(prec_rows):
+    """Precedents admitted on a medium-confidence date are weaker evidence, since the
+    measurement window may be anchored a day or two off. Surface that per precedent."""
+    out = []
+    for p in prec_rows:
+        d = p.get("data") or {}
+        if d.get("date_confidence") == "medium":
+            out.append({
+                "precedent": p.get("name", p["id"]),
+                "detail": (f"The information date for this precedent is known to within a "
+                           f"few days rather than exactly. {d.get('date_reasoning','')} "
+                           f"A window anchored slightly off can understate the measured "
+                           f"reaction.").strip(),
+            })
+    return out
 
 
 def anticipation_check(prec_rows):
@@ -438,14 +506,32 @@ def build_diagnostics(event, prec_rows):
         return None
     concentration = concentration_check(prec_rows)
     anticipation = anticipation_check(prec_rows)
+    date_certainty = date_certainty_check(prec_rows)
     confounding = ai_confounding_check(event, prec_rows)
+
+    tiers = [(p.get("data") or {}).get("evidence_tier", "weak") for p in prec_rows]
+    n_strong = sum(1 for t in tiers if t == "strong")
+    n_moderate = sum(1 for t in tiers if t == "moderate")
+    n_weak = sum(1 for t in tiers if t == "weak")
 
     contaminated = [c for c in confounding if not c.get("clean", True)]
     n = len(prec_rows)
     parts = [f"{n} precedent{'s' if n != 1 else ''} cleared validation"]
+    strength_bits = []
+    if n_strong:
+        strength_bits.append(f"{n_strong} strong")
+    if n_moderate:
+        strength_bits.append(f"{n_moderate} moderate")
+    if n_weak:
+        strength_bits.append(f"{n_weak} weak")
+    if strength_bits:
+        parts.append("evidence strength: " + ", ".join(strength_bits))
     if concentration:
         parts.append(f"{len(concentration)} sector result{'s' if len(concentration) != 1 else ''} "
                      f"driven by a single constituent")
+    if date_certainty:
+        parts.append(f"{len(date_certainty)} precedent{'s' if len(date_certainty) != 1 else ''} "
+                     f"dated only to within a few days")
     if contaminated:
         parts.append(f"{len(contaminated)} measurement window{'s' if len(contaminated) != 1 else ''} "
                      f"contained a confounding development")
@@ -454,9 +540,8 @@ def build_diagnostics(event, prec_rows):
     est_days = [(p.get("data") or {}).get("measurement", {}).get("estimation_days")
                 for p in prec_rows]
     est_days = [d for d in est_days if d]
-    date_basis = ("Every precedent used here was dated with high confidence and anchored "
-                  "to the information date, the first trading day markets could plausibly "
-                  "have known.")
+    date_basis = ("Each precedent is anchored to its information date, the first trading "
+                  "day markets could plausibly have known.")
     if est_days:
         date_basis += (f" Each reaction was tested against normal volatility estimated "
                        f"over roughly {int(sum(est_days)/len(est_days))} trading days of "
@@ -465,13 +550,15 @@ def build_diagnostics(event, prec_rows):
     return {
         "summary": summary,
         "date_basis": date_basis,
+        "evidence_strength": {"strong": n_strong, "moderate": n_moderate, "weak": n_weak},
         "concentration": concentration,
+        "date_certainty": date_certainty,
         "anticipation": anticipation,
         "confounding": confounding,
     }
 
 
-# ---------- IMPORTANT NOTES, narrowed ----------
+# ---------- IMPORTANT NOTES ----------
 def ai_important_notes(event, prec_rows, diagnostics):
     """Interpretation only. The diagnostics layer already handles whether the
     measurements are trustworthy, so this answers only what the comparison supports."""
@@ -530,14 +617,17 @@ def build_expectation(prec_rows):
         d = p.get("data") or {}
         used.append({"id": p["id"], "name": p.get("name", ""),
                      "date": str(p.get("information_date", ""))[:10],
-                     "why_relevant": d.get("why_relevant", "")})
+                     "why_relevant": d.get("why_relevant", ""),
+                     "evidence_tier": d.get("evidence_tier", ""),
+                     "evidence_note": d.get("evidence_note", "")})
         rows = []
         for r in d.get("reaction", []):
             try:
                 pct = float(str(r["pct"]).replace("%", "").replace("+", ""))
             except Exception:
                 continue
-            sector_moves.setdefault(r["sector"], []).append((pct, bool(r.get("significant"))))
+            sector_moves.setdefault(r["sector"], []).append(
+                (pct, r.get("significance", "not_significant")))
             rows.append({"sector": r["sector"], "pct": r["pct"], "value": pct,
                          "significant": bool(r.get("significant")),
                          "significance": r.get("significance", ""),
@@ -546,6 +636,7 @@ def build_expectation(prec_rows):
         vix = vol.get("vix")
         per_precedent.append({"id": p["id"], "name": p.get("name", ""),
                               "date": str(p.get("information_date", ""))[:10],
+                              "evidence_tier": d.get("evidence_tier", ""),
                               "moves": rows, "vix_change": (vix or {}).get("change_pct")})
         if vix and vix.get("change_pct"):
             try:
@@ -561,18 +652,28 @@ def build_expectation(prec_rows):
     averages = []
     for sector, entries in sector_moves.items():
         pcts = [e[0] for e in entries]
-        n_sig = sum(1 for e in entries if e[1])
+        n_sig = sum(1 for e in entries if e[1] == "significant")
+        n_dir = sum(1 for e in entries if e[1] == "directional")
         avg = sum(pcts) / len(pcts)
-        sig_pcts = [e[0] for e in entries if e[1]]
+        sig_pcts = [e[0] for e in entries if e[1] in ("significant", "directional")]
         avg_sig = (sum(sig_pcts) / len(sig_pcts)) if sig_pcts else None
+
+        if n_sig:
+            consistency = (f"{n_sig} of {len(entries)} significant at the 5% level"
+                           + (f", {n_dir} more at the 10% level" if n_dir else ""))
+        elif n_dir:
+            consistency = f"{n_dir} of {len(entries)} significant at the 10% level only"
+        else:
+            consistency = f"0 of {len(entries)} reached statistical significance"
+
         averages.append({
             "sector": sector, "avg_move": f"{avg:+.1f}%", "avg_value": round(avg, 2),
             "avg_move_significant_only": (f"{avg_sig:+.1f}%" if avg_sig is not None else None),
-            "n_events": len(entries), "n_significant": n_sig,
+            "n_events": len(entries), "n_significant": n_sig, "n_directional": n_dir,
             "range_low": f"{min(pcts):+.1f}%", "range_high": f"{max(pcts):+.1f}%",
             "spread": round(max(pcts) - min(pcts), 1) if len(pcts) > 1 else 0,
             "direction": "gain" if avg >= 0 else "loss",
-            "consistency": f"{n_sig} of {len(entries)} were statistically significant"})
+            "consistency": consistency})
     averages.sort(key=lambda x: abs(x["avg_value"]), reverse=True)
 
     return {"based_on": used, "sector_averages": averages, "per_precedent": per_precedent,
@@ -609,8 +710,8 @@ def publish(cid, e, prec_rows, expectation, diagnostics, notes):
         "companies_affected": [], "companies_in_news": [],
         "confidence": ("Breaking event. The market reaction has not happened yet and cannot "
                        "be measured. The precedents below were researched for this event, "
-                       "measured from real market data, and validated against a statistical "
-                       "significance bar. This analysis deepens as market data accumulates."),
+                       "measured from real market data, and labelled by evidence strength. "
+                       "This analysis deepens as market data accumulates."),
         "disclaimer": DISCLAIMER,
     }
     top = {"id": cid, "name": e.get("headline", "")[:120], "type_label": e.get("event_type", ""),
@@ -622,8 +723,12 @@ def publish(cid, e, prec_rows, expectation, diagnostics, notes):
         data=json.dumps([{**top, "data": record}]), timeout=30)
     n_notes = len(notes.get("notes", [])) if notes else 0
     n_flags = len((diagnostics or {}).get("concentration", []))
+    strength = (diagnostics or {}).get("evidence_strength", {})
+    strength_txt = ("/".join(f"{v}{k[0]}" for k, v in strength.items() if v)
+                    if strength else "")
     print(f"  {'SAVED' if resp.status_code < 300 else 'error '+str(resp.status_code)}: {cid}"
-          f" ({len(prec_rows)} precedents, {len(record['companies_involved'])} companies, "
+          f" ({len(prec_rows)} precedents{' ' + strength_txt if strength_txt else ''}, "
+          f"{len(record['companies_involved'])} companies, "
           f"{n_flags} concentration flag(s), {n_notes} note(s))")
     if notes and notes.get("verdict"):
         print(f"    verdict: {notes['verdict']}")
